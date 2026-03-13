@@ -14,4 +14,9 @@ class Employee {
       employeeName: json['employeeName'] as String? ?? '',
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'employeeCode': employeeCode,
+        'employeeName': employeeName,
+      };
 }

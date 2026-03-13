@@ -5,6 +5,11 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+repositories {
+    // TSS SDK (AAR) を android/app/libs から参照する
+    flatDir { dirs("libs") }
+}
+
 android {
     namespace = "com.example.tag_reader_app"
     compileSdk = flutter.compileSdkVersion
@@ -41,4 +46,9 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // 実機タグリーダーSDK（ファイルは別途配置: android/app/libs/TSS_SDK.aar）
+    implementation(files("libs/TSS_SDK.aar"))
 }

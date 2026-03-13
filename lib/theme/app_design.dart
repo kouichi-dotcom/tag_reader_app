@@ -44,6 +44,9 @@ class AppDesign {
 
   static const Color selectedBackground = Color(0xFFE3F2FD);
 
+  /// 送信選択した商品の背景（薄い緑）
+  static const Color selectedForSendBackground = Color(0xFFD4EDDA);
+
   /// 紐付け済・成功系
   static const Color linkedBackground = Color(0xFFE8F5E9);
 
@@ -67,4 +70,7 @@ class AppDesign {
 
   /// ノッチ高さ（デバイス上部の黒い部分）
   static const double notchHeight = 34;
+
+  /// 電波強度メーター・ボタン用（緑）
+  static const Color radioPowerMeterGreen = Color(0xFF8BC34A);
 }

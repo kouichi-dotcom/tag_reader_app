@@ -29,10 +29,15 @@ const Map<String, String> mockEmployeeNameByCode = {
 
 // --- モックデータ定義（ここを編集して増減） ---
 
-/// スキャンで出てくるデバイス一覧（画面 1）
+/// スキャンで出てくるデバイス一覧（画面 1）ペアリング済み
 const List<MockBleDevice> mockBleDevices = [
   MockBleDevice(id: 'MOCK-001', name: 'DOTR-900J (モック1)'),
   MockBleDevice(id: 'MOCK-002', name: 'DOTR-900J (モック2)'),
+];
+
+/// スキャンで検出したデバイス一覧（画面 1）モック用・実機と同じ2セクション表示
+const List<MockBleDevice> mockScannedBleDevices = [
+  MockBleDevice(id: 'MOCK-BLE-001', name: 'DOTR-900J (スキャン検出)'),
 ];
 
 /// 読んだタグの一覧（画面 2）
@@ -49,6 +54,19 @@ const Map<String, Product> mockProductByEpc = {
   // '300000000000000000000003' は意図的になし → 商品不明
 };
 
+/// 伝票に紐づく商品 1 行（受付明細）
+class MockSlipDetailItem {
+  final String productName;
+  final num quantity;
+  final String unitName;
+
+  const MockSlipDetailItem({
+    required this.productName,
+    required this.quantity,
+    required this.unitName,
+  });
+}
+
 /// 伝票 1 件（画面 7 用）
 class MockSlip {
   final String id;
@@ -57,6 +75,10 @@ class MockSlip {
   final String site;
   final String subject;
   final String products;
+  /// 受付日時（新しい順で並べる用）
+  final DateTime? receptionAt;
+  /// 紐づく商品（受付明細）
+  final List<MockSlipDetailItem> detailItems;
 
   const MockSlip({
     required this.id,
@@ -65,6 +87,8 @@ class MockSlip {
     required this.site,
     required this.subject,
     required this.products,
+    this.receptionAt,
+    this.detailItems = const [],
   });
 }
 
@@ -93,8 +117,8 @@ const List<MockLinkProduct> mockLinkProductPool = [
   MockLinkProduct(id: 'lp6', name: 'レンタル機材A', code: '003', status: 'OK'),
 ];
 
-/// 伝票一覧（画面 7）
-const List<MockSlip> mockSlips = [
+/// 伝票一覧（画面 7）テスト用：受付日時の新しい順で10件表示するため10件用意
+final List<MockSlip> mockSlips = [
   MockSlip(
     id: '1',
     no: 'D-2025-001',
@@ -102,6 +126,11 @@ const List<MockSlip> mockSlips = [
     site: '〇〇現場（東京都）',
     subject: 'レンタル機材納品',
     products: 'レンタル機材A ×2, レンタル機材B ×1',
+    receptionAt: DateTime(2025, 2, 19, 10, 30),
+    detailItems: [
+      MockSlipDetailItem(productName: 'レンタル機材A', quantity: 2, unitName: '台'),
+      MockSlipDetailItem(productName: 'レンタル機材B', quantity: 1, unitName: '台'),
+    ],
   ),
   MockSlip(
     id: '2',
@@ -110,6 +139,10 @@ const List<MockSlip> mockSlips = [
     site: '△△倉庫（神奈川県）',
     subject: '返却受入',
     products: 'レンタル機材C ×1',
+    receptionAt: DateTime(2025, 2, 19, 9, 15),
+    detailItems: [
+      MockSlipDetailItem(productName: 'レンタル機材C', quantity: 1, unitName: '台'),
+    ],
   ),
   MockSlip(
     id: '3',
@@ -118,5 +151,97 @@ const List<MockSlip> mockSlips = [
     site: '□□本社（埼玉県）',
     subject: '新規レンタル',
     products: 'レンタル機材A ×1, レンタル機材B ×2',
+    receptionAt: DateTime(2025, 2, 19, 8, 0),
+    detailItems: [
+      MockSlipDetailItem(productName: 'レンタル機材A', quantity: 1, unitName: '台'),
+      MockSlipDetailItem(productName: 'レンタル機材B', quantity: 2, unitName: '台'),
+    ],
+  ),
+  MockSlip(
+    id: '4',
+    no: 'D-2025-004',
+    company: '〇〇建材',
+    site: '〇〇倉庫（千葉県）',
+    subject: '納品・点検',
+    products: 'レンタル機材A ×3',
+    receptionAt: DateTime(2025, 2, 18, 16, 45),
+    detailItems: [
+      MockSlipDetailItem(productName: 'レンタル機材A', quantity: 3, unitName: '台'),
+    ],
+  ),
+  MockSlip(
+    id: '5',
+    no: 'D-2025-005',
+    company: '△△建設',
+    site: '△△現場（東京都）',
+    subject: '返却',
+    products: 'レンタル機材B ×2, レンタル機材C ×1',
+    receptionAt: DateTime(2025, 2, 18, 14, 20),
+    detailItems: [
+      MockSlipDetailItem(productName: 'レンタル機材B', quantity: 2, unitName: '台'),
+      MockSlipDetailItem(productName: 'レンタル機材C', quantity: 1, unitName: '台'),
+    ],
+  ),
+  MockSlip(
+    id: '6',
+    no: 'D-2025-006',
+    company: '□□物流',
+    site: '□□配送センター（埼玉県）',
+    subject: '新規レンタル',
+    products: 'レンタル機材C ×2',
+    receptionAt: DateTime(2025, 2, 18, 11, 0),
+    detailItems: [
+      MockSlipDetailItem(productName: 'レンタル機材C', quantity: 2, unitName: '台'),
+    ],
+  ),
+  MockSlip(
+    id: '7',
+    no: 'D-2025-007',
+    company: '株式会社サンプル建設',
+    site: '別現場（東京都）',
+    subject: '追加納品',
+    products: 'レンタル機材A ×1, レンタル機材B ×1',
+    receptionAt: DateTime(2025, 2, 17, 15, 30),
+    detailItems: [
+      MockSlipDetailItem(productName: 'レンタル機材A', quantity: 1, unitName: '台'),
+      MockSlipDetailItem(productName: 'レンタル機材B', quantity: 1, unitName: '台'),
+    ],
+  ),
+  MockSlip(
+    id: '8',
+    no: 'D-2025-008',
+    company: '〇〇商事',
+    site: '本社（神奈川県）',
+    subject: '返却受入',
+    products: 'レンタル機材A ×1',
+    receptionAt: DateTime(2025, 2, 17, 10, 0),
+    detailItems: [
+      MockSlipDetailItem(productName: 'レンタル機材A', quantity: 1, unitName: '台'),
+    ],
+  ),
+  MockSlip(
+    id: '9',
+    no: 'D-2025-009',
+    company: '△△運輸',
+    site: '△△倉庫（千葉県）',
+    subject: 'レンタル機材納品',
+    products: 'レンタル機材B ×3',
+    receptionAt: DateTime(2025, 2, 16, 9, 45),
+    detailItems: [
+      MockSlipDetailItem(productName: 'レンタル機材B', quantity: 3, unitName: '台'),
+    ],
+  ),
+  MockSlip(
+    id: '10',
+    no: 'D-2025-010',
+    company: '□□建設',
+    site: '□□現場（茨城県）',
+    subject: '新規レンタル',
+    products: 'レンタル機材A ×2, レンタル機材C ×1',
+    receptionAt: DateTime(2025, 2, 16, 8, 15),
+    detailItems: [
+      MockSlipDetailItem(productName: 'レンタル機材A', quantity: 2, unitName: '台'),
+      MockSlipDetailItem(productName: 'レンタル機材C', quantity: 1, unitName: '台'),
+    ],
   ),
 ];

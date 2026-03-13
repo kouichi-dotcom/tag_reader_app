@@ -1,13 +1,19 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
 import '../config/api_config.dart';
+import '../models/inventory_epc.dart';
 import '../models/product_update_request.dart';
 import '../services/employee_storage.dart';
+import '../services/storage_location_storage.dart';
+import '../services/tag_reader_service.dart';
 import '../theme/app_design.dart';
+import '../widgets/app_notification.dart';
 
-/// 画面 2: タグ読取・一覧（design/screen2-tag-list-wireframe.html 準拠）
-/// 読取開始/停止、タグ一覧（EPC・商品名・ステータス・日時）、送信待ち・送信ボタン
+/// 画面 2: ICタグ読取・更新（design/screen2-tag-list-wireframe.html 準拠）
+/// 読取開始/停止、タグ一覧（EPC・商品名・ステータス）、送信待ち・送信ボタン
 class TagListScreen extends StatefulWidget {
   const TagListScreen({super.key, this.showBackButton = false});
 
@@ -20,15 +26,14 @@ class TagListScreen extends StatefulWidget {
 /// ステータス候補（tag_mode2 の全データに合わせる）
 const List<String> _statusOptions = [
   'ＯＫ',
-  '在庫',
-  '自社使用',
-  '修理中',
-  '整備中',
   '清掃中',
+  '整備中',
+  '修理中',
   '貸出中',
-  '登録',
   '廃棄',
+  '在庫',
   '予約',
+  '自社使用',
   '不明',
 ];
 
@@ -58,7 +63,16 @@ class _TagListScreenState extends State<TagListScreen> {
   final Map<int, String> _statusOverrides = {};
   bool _randomLoading = false;
 
+  final _reader = TagReaderService.instance;
+  StreamSubscription<InventoryEpc>? _invSub;
+
   int get _pendingCount => _selectedForSend.length;
+
+  String _formatNow() {
+    final now = DateTime.now();
+    return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} '
+        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+  }
 
   String _effectiveStatus(int index) {
     if (_statusOverrides.containsKey(index)) return _statusOverrides[index]!;
@@ -105,11 +119,119 @@ class _TagListScreenState extends State<TagListScreen> {
     }
   }
 
-  void _toggleRead() {
-    setState(() => _isReading = !_isReading);
+  Future<void> _toggleRead() async {
+    if (_isReading) {
+      await _reader.stopInventory();
+      await _invSub?.cancel();
+      _invSub = null;
+      if (mounted) setState(() => _isReading = false);
+      return;
+    }
+
+    setState(() => _isReading = true);
+
+    // Android実機: inventory開始してEPCイベントを一覧に追加
+    if (_reader.isAndroid) {
+      final okPerm = await _reader.requestBluetoothPermissions();
+      final okConn = await _reader.isConnected();
+      if (!mounted) return;
+      if (!okPerm) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Bluetooth権限が必要です。設定から許可してください。')),
+        );
+        setState(() => _isReading = false);
+        return;
+      }
+      if (!okConn) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('タグリーダーが未接続です。先に「タグリーダー接続」で接続してください。')),
+        );
+        setState(() => _isReading = false);
+        return;
+      }
+
+      await _invSub?.cancel();
+      _invSub = _reader.inventoryEpcStream.listen((inv) {
+        if (!mounted || !_isReading) return;
+        final epc = inv.epcForLookup;
+        final readAt = _formatNow();
+
+        final idx = _reads.length;
+        setState(() {
+          _reads.add(_TagReadItem(
+            epc: epc,
+            productName: '照合中…',
+            status: '不明',
+            readAt: readAt,
+          ));
+        });
+
+        // 可能ならAPIで商品情報を補完（未接続/未整備の場合は失敗してもOK）
+        final api = ApiClient(baseUrl: kApiBaseUrl);
+        api.fetchProduct(epc).then((p) {
+          if (!mounted) return;
+          if (p == null) {
+            setState(() {
+              if (idx < _reads.length) {
+                final cur = _reads[idx];
+                _reads[idx] = _TagReadItem(
+                  epc: cur.epc,
+                  productName: '商品不明',
+                  status: cur.status,
+                  readAt: cur.readAt,
+                  productCode: cur.productCode,
+                  number: cur.number,
+                );
+              }
+            });
+            return;
+          }
+          setState(() {
+            if (idx < _reads.length) {
+              final cur = _reads[idx];
+              _reads[idx] = _TagReadItem(
+                epc: cur.epc,
+                productName: p.productName.isEmpty ? '商品不明' : p.productName,
+                status: p.status.isEmpty ? '不明' : p.status,
+                readAt: cur.readAt,
+                productCode: p.productCode,
+                number: p.number,
+              );
+            }
+          });
+        }).catchError((_) {
+          // オフライン/未構築でも読取自体は続ける
+        });
+      });
+
+      final ok = await _reader.startInventory(
+        dateTime: true,
+        radioPower: true,
+        channel: true,
+        temp: false,
+        phase: false,
+      );
+      if (!mounted) return;
+      if (!ok) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('読取開始に失敗しました（接続状態を確認してください）。')),
+        );
+        await _invSub?.cancel();
+        _invSub = null;
+        setState(() => _isReading = false);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _invSub?.cancel();
+    _reader.stopInventory();
+    super.dispose();
   }
 
   void _toggleSelect(int index) {
+    if (kIsProductionDb) return; // 本番では送信選択不可
     setState(() {
       if (_selectedForSend.contains(index)) {
         _selectedForSend.remove(index);
@@ -120,13 +242,22 @@ class _TagListScreenState extends State<TagListScreen> {
   }
 
   void _showStatusDialog(BuildContext context, int index) {
+    if (kIsProductionDb) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('本番DBでは読み取り専用のため、ステータスを変更できません。'),
+        ),
+      );
+      return;
+    }
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       isDismissible: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) {
-        final maxH = MediaQuery.of(ctx).size.height * 0.55;
+        // 全候補がスクロールなしで表示されるよう、シートの最大高さを広めに（画面の90%）
+        final maxH = MediaQuery.of(ctx).size.height * 0.9;
         return Stack(
           children: [
             // 暗い部分タップで閉じる（バリア）
@@ -137,7 +268,7 @@ class _TagListScreenState extends State<TagListScreen> {
                 child: const ColoredBox(color: Color(0x80000000)),
               ),
             ),
-            // 白いシート
+            // 白いシート（内容に合わせた高さ、最大 maxH）
             Align(
               alignment: Alignment.bottomCenter,
               child: GestureDetector(
@@ -170,6 +301,7 @@ class _TagListScreenState extends State<TagListScreen> {
                             child: SingleChildScrollView(
                               padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
                               child: Column(
+                                mainAxisSize: MainAxisSize.min,
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: _statusOptions
                                     .map(
@@ -177,7 +309,10 @@ class _TagListScreenState extends State<TagListScreen> {
                                         padding: const EdgeInsets.only(bottom: 8),
                                         child: OutlinedButton(
                                           onPressed: () {
-                                            setState(() => _statusOverrides[index] = status);
+                                            setState(() {
+                                              _statusOverrides[index] = status;
+                                              _selectedForSend.add(index);
+                                            });
                                             Navigator.pop(ctx);
                                           },
                                           style: OutlinedButton.styleFrom(
@@ -213,6 +348,7 @@ class _TagListScreenState extends State<TagListScreen> {
 
     final api = ApiClient(baseUrl: kApiBaseUrl);
     final userId = await EmployeeStorage.getCode();
+    final storageLocationCode = await StorageLocationStorage.getStorageLocationCode();
 
     int successCount = 0;
     String? errorMessage;
@@ -226,6 +362,7 @@ class _TagListScreenState extends State<TagListScreen> {
         readAt: tag.readAt,
         changes: {'status': status},
         userId: userId,
+        storageLocation: storageLocationCode,
       );
       try {
         await api.submitProductUpdate(request);
@@ -238,18 +375,14 @@ class _TagListScreenState extends State<TagListScreen> {
 
     if (!mounted) return;
     if (errorMessage != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('送信エラー: $errorMessage'), backgroundColor: Colors.red),
-      );
+      showAppNotification(context, '送信エラー: $errorMessage');
       return;
     }
     setState(() {
       _sentIndices.addAll(toSend);
       _selectedForSend.removeAll(toSend);
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('送信しました（$successCount 件）。DB を更新しました。')),
-    );
+    showAppNotification(context, '送信しました（$successCount 件）。DB を更新しました。');
   }
 
   @override
@@ -266,7 +399,7 @@ class _TagListScreenState extends State<TagListScreen> {
               children: [
                 _NavBar(
                   showBackButton: widget.showBackButton,
-                  title: 'タグ読取・一覧',
+                  title: 'ICタグ読取・更新',
                   onBack: () => Navigator.of(context).pop(),
                 ),
                 // 読取コントロール
@@ -278,7 +411,7 @@ class _TagListScreenState extends State<TagListScreen> {
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
-                          onPressed: _toggleRead,
+                          onPressed: () => _toggleRead(),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: _isReading ? AppDesign.stopButton : AppDesign.primaryButton,
                             foregroundColor: Colors.white,
@@ -313,7 +446,7 @@ class _TagListScreenState extends State<TagListScreen> {
                     ],
                   ),
                 ),
-                // 送信待ちバー
+                // 送信待ちバー（本番では読み取り専用のため送信不可）
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   color: AppDesign.pendingBarBackground,
@@ -321,11 +454,13 @@ class _TagListScreenState extends State<TagListScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        '送信待ち: $_pendingCount 件',
+                        kIsProductionDb
+                            ? '本番のため読み取り専用（送信不可）'
+                            : '送信待ち: $_pendingCount 件',
                         style: const TextStyle(fontSize: 14, color: Color(0xFF8A7000)),
                       ),
                       ElevatedButton(
-                        onPressed: _pendingCount > 0 ? _sendSelected : null,
+                        onPressed: (!kIsProductionDb && _pendingCount > 0) ? _sendSelected : null,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppDesign.sendButton,
                           foregroundColor: Colors.white,
@@ -333,41 +468,53 @@ class _TagListScreenState extends State<TagListScreen> {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                           elevation: 0,
                         ),
-                        child: const Text('送信', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                        child: Text(
+                          kIsProductionDb ? '送信（無効）' : '送信',
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                        ),
                       ),
                     ],
                   ),
                 ),
                 // 一覧ヘッダー
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  color: AppDesign.navBarBackground,
-                  child: const Text(
-                    'タグ一覧（ダブルタップ: 送信選択 / 長押し・右クリック: ステータス変更）',
-                    style: TextStyle(fontSize: 12, color: Color(0xFF666666)),
-                  ),
-                ),
+                // Container(
+                //   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                //   color: AppDesign.navBarBackground,
+                //   child: const Text(
+                //     'タグ一覧（ダブルタップ: 送信選択 / 長押し・右クリック: ステータス変更）',
+                //     style: TextStyle(fontSize: 12, color: Color(0xFF666666)),
+                //   ),
+                // ),
                 // タグ一覧
                 Expanded(
-                  child: _reads.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Text(
-                                '読み取ったタグがありません',
-                                style: TextStyle(fontSize: 14, color: Color(0xFF666666)),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                '「テスト: ランダムに1件読み取り」でAPIから取得',
-                                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                              ),
-                            ],
-                          ),
-                        )
-                      : ListView.builder(
+                  child: Container(
+                    color: Colors.white,
+                    child: _reads.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text(
+                                  '読み取ったタグがありません',
+                                  style: TextStyle(fontSize: 14, color: Color(0xFF666666)),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  '「テスト: ランダムに1件読み取り」でAPIから取得',
+                                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                                ),
+                              ],
+                            ),
+                          )
+                        : ListView.separated(
                           itemCount: _reads.length,
+                          separatorBuilder: (_, __) => const Divider(
+                            height: 1,
+                            thickness: 1,
+                            color: Color(0xFF9E9E9E),
+                            indent: 16,
+                            endIndent: 16,
+                          ),
                           itemBuilder: (context, index) {
                             final tag = _reads[index];
                             final productName = tag.productName;
@@ -377,7 +524,7 @@ class _TagListScreenState extends State<TagListScreen> {
                             final statusStyle = _statusStyleFromLabel(statusLabel);
 
                             return Material(
-                              color: isSelected ? AppDesign.selectedBackground : null,
+                              color: isSelected ? AppDesign.selectedForSendBackground : Colors.white,
                               child: GestureDetector(
                                 onDoubleTap: () => _toggleSelect(index),
                                 onLongPress: () => _showStatusDialog(context, index),
@@ -390,10 +537,9 @@ class _TagListScreenState extends State<TagListScreen> {
                                         color: isSelected ? AppDesign.selectedBorder : Colors.transparent,
                                         width: 4,
                                       ),
-                                      bottom: const BorderSide(color: Color(0xFFEEEEEE), width: 1),
                                     ),
                                   ),
-                                    child: Column(
+                                  child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(
@@ -404,19 +550,39 @@ class _TagListScreenState extends State<TagListScreen> {
                                           fontFamily: 'monospace',
                                         ),
                                       ),
-                                      if (tag.productCode != null || tag.number != null) ...[
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          [
-                                            if (tag.productCode != null) '商品コード: ${tag.productCode}',
-                                            if (tag.number != null) '番号: ${tag.number}',
-                                          ].join('  '),
-                                          style: const TextStyle(
-                                            fontSize: 12,
-                                            color: Color(0xFF666666),
+                                      const SizedBox(height: 2),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              [
+                                                if (tag.productCode != null) '商品コード: ${tag.productCode}',
+                                                if (tag.productCode != null && tag.number != null) '  ',
+                                                if (tag.number != null) '番号: ${tag.number}',
+                                              ].join(),
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                                color: Color(0xFF666666),
+                                              ),
+                                            ),
                                           ),
-                                        ),
-                                      ],
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: statusStyle.bg,
+                                              borderRadius: BorderRadius.circular(6),
+                                            ),
+                                            child: Text(
+                                              statusLabel,
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w500,
+                                                color: statusStyle.fg,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                       const SizedBox(height: 4),
                                       Row(
                                         children: [
@@ -441,32 +607,6 @@ class _TagListScreenState extends State<TagListScreen> {
                                             ),
                                         ],
                                       ),
-                                      const SizedBox(height: 4),
-                                      Wrap(
-                                        spacing: 12,
-                                        runSpacing: 4,
-                                        children: [
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                            decoration: BoxDecoration(
-                                              color: statusStyle.bg,
-                                              borderRadius: BorderRadius.circular(6),
-                                            ),
-                                            child: Text(
-                                              statusLabel,
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w500,
-                                                color: statusStyle.fg,
-                                              ),
-                                            ),
-                                          ),
-                                          Text(
-                                            tag.readAt,
-                                            style: const TextStyle(fontSize: 13, color: Color(0xFF666666)),
-                                          ),
-                                        ],
-                                      ),
                                     ],
                                   ),
                                 ),
@@ -474,15 +614,16 @@ class _TagListScreenState extends State<TagListScreen> {
                             );
                           },
                         ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                  child: Text(
-                    '※ テスト時は「ランダムに1件読み取り」でAPIから表示',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-                    textAlign: TextAlign.center,
                   ),
                 ),
+                // Padding(
+                //   padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                //   child: Text(
+                //     '※ テスト時は「ランダムに1件読み取り」でAPIから表示',
+                //     style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                //     textAlign: TextAlign.center,
+                //   ),
+                // ),
               ],
             ),
           ),

@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../api/api_client.dart';
+import '../config/api_config.dart';
 import '../mocks/mock_data.dart';
+import '../models/reception_slip.dart';
+import '../services/employee_cache.dart';
 import '../theme/app_design.dart';
 
 /// 伝票・商品紐付け画面（design/screen7 の link-overlay 準拠）
@@ -12,7 +16,7 @@ class SlipLinkScreen extends StatefulWidget {
     this.initialLinkedProducts,
   });
 
-  final MockSlip slip;
+  final ReceptionSlip slip;
   /// すでに紐付け済みの商品（再表示時はチェック済みで一覧に表示）
   final List<MockLinkProduct>? initialLinkedProducts;
 
@@ -24,6 +28,8 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
   final List<MockLinkProduct> _products = [];
   final Set<String> _selectedIds = {};
   int _readCounter = 0;
+  /// 担当者コードから取得した担当者名（伝票に handlerName が無い場合に EmployeeCache で解決）
+  String? _resolvedHandlerName;
 
   @override
   void initState() {
@@ -32,6 +38,18 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
     if (initial != null && initial.isNotEmpty) {
       _products.addAll(initial);
       _selectedIds.addAll(initial.map((e) => e.id));
+    }
+    final slip = widget.slip;
+    if (slip.handlerCode != null &&
+        slip.handlerCode!.trim().isNotEmpty &&
+        (slip.handlerName == null || slip.handlerName!.trim().isEmpty)) {
+      _resolvedHandlerName = EmployeeCache.instance.getNameFromMemory(slip.handlerCode!);
+      if (_resolvedHandlerName == null) {
+        final api = ApiClient(baseUrl: kApiBaseUrl);
+        EmployeeCache.instance.resolveName(api, slip.handlerCode!).then((name) {
+          if (mounted && name != null) setState(() => _resolvedHandlerName = name);
+        });
+      }
     }
   }
 
@@ -65,9 +83,10 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
 
   void _showConfirm() {
     final selected = _products.where((p) => _selectedIds.contains(p.id)).toList();
+    final slip = widget.slip;
     final lines = <String>[
-      '伝票: ${widget.slip.no}',
-      '会社名: ${widget.slip.company}',
+      '伝票: ${slip.receptionNo}',
+      '会社名: ${slip.customerName}',
       '',
       ...selected.map((p) => '${p.name}（${p.code}）: ${p.status}'),
     ];
@@ -125,6 +144,14 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
     );
   }
 
+  /// 商品・台数の表示文字列（詳細と同じ形式）
+  static String _detailsSummary(ReceptionSlip slip) {
+    if (slip.details.isEmpty) return '--';
+    return slip.details
+        .map((d) => '${d.productName}（${d.quantity != null ? d.quantity!.toInt() : '--'}）')
+        .join('・');
+  }
+
   ({Color fg, Color bg}) _statusStyle(String status) {
     switch (status) {
       case 'OK':
@@ -167,10 +194,17 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
                         _LinkSection(
                           title: '伝票基本情報',
                           children: [
-                            _InfoLine(label: '伝票番号', value: slip.no),
-                            _InfoLine(label: '会社名', value: slip.company),
-                            _InfoLine(label: '現場名', value: slip.site),
-                            _InfoLine(label: '配達商品・数', value: slip.products),
+                            _InfoLine(label: '伝票番号', value: slip.receptionNo),
+                            _InfoLine(
+                              label: '担当者',
+                              value: slip.handlerName?.trim().isNotEmpty == true
+                                  ? slip.handlerName!
+                                  : (_resolvedHandlerName ?? slip.handlerDisplay),
+                            ),
+                            _InfoLine(label: '会社名', value: slip.customerName),
+                            _InfoLine(label: '現場名', value: slip.siteName),
+                            _InfoLine(label: '用件', value: slip.subject),
+                            _InfoLine(label: '商品・台数', value: _detailsSummary(slip)),
                           ],
                         ),
                         // 読み取りボタン

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
 import '../config/api_config.dart';
+import '../services/employee_cache.dart';
 import '../services/employee_storage.dart';
 import '../theme/app_design.dart';
 
@@ -38,16 +39,18 @@ class _EmployeeCodeScreenState extends State<EmployeeCodeScreen> {
     setState(() => _saving = true);
     try {
       final api = ApiClient(baseUrl: kApiBaseUrl);
-      final employee = await api.fetchEmployee(code);
+      await EmployeeCache.instance.ensureInitialLoaded(api);
       if (!mounted) return;
-      if (employee == null) {
+      final name = await EmployeeCache.instance.resolveName(api, code);
+      if (!mounted) return;
+      if (name == null) {
         setState(() {
           _saving = false;
           _errorMessage = '該当する担当者が見つかりません。（コード: $code）';
         });
         return;
       }
-      await EmployeeStorage.save(code, employee.employeeName);
+      await EmployeeStorage.save(code, name);
       if (mounted) {
         setState(() => _saving = false);
         Navigator.of(context).pop(true);

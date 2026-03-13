@@ -43,3 +43,8 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# --- TagReader SDK (TSS) ---
+# バイナリはリポジトリに含めず、手元で配置する
+/android/app/libs/TSS_SDK.aar
+/android/app/src/main/jniLibs/**/libDeviceAPI.so

@@ -1,12 +1,20 @@
 import 'package:flutter/material.dart';
 
+import '../api/api_client.dart';
+import '../config/api_config.dart';
 import '../services/connected_device_storage.dart';
+import '../services/employee_cache.dart';
 import '../services/employee_storage.dart';
+import '../services/product_cache.dart';
+import '../services/storage_location_storage.dart';
 import '../theme/app_design.dart';
 import 'device_connection_screen.dart';
 import 'employee_code_screen.dart';
+import 'settings_screen.dart';
+import 'slip_load_screen.dart';
+import 'storage_location_screen.dart';
+import 'tag_info_screen.dart';
 import 'tag_list_screen.dart';
-import 'slip_list_screen.dart';
 
 /// メイン画面（design/index.html 準拠）
 /// タグリーダー接続・タグ読み取り・伝票一覧・従業員コード入力・設定への入口
@@ -20,6 +28,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   String? _employeeName;
   String? _connectedDeviceName;
+  String? _storageLocationName;
 
   Future<void> _loadEmployee() async {
     final name = await EmployeeStorage.getName();
@@ -31,8 +40,44 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) setState(() => _connectedDeviceName = name);
   }
 
+  Future<void> _loadStorageLocation() async {
+    final name = await StorageLocationStorage.getName();
+    if (mounted) setState(() => _storageLocationName = name);
+  }
+
   Future<void> _loadAll() async {
-    await Future.wait([_loadEmployee(), _loadConnectedDevice()]);
+    // API の環境（本番/開発）を取得し、ヘッダーの (本番DB)/(ローカルDB) を正しく表示
+    await fetchAndCacheApiEnvironment();
+    if (mounted) setState(() {});
+    await Future.wait([_loadEmployee(), _loadConnectedDevice(), _loadStorageLocation()]);
+    // 担当者キャッシュを初回一括取得で準備（バックグラウンド）
+    final cache = EmployeeCache.instance;
+    cache.init().then((_) {
+      final api = ApiClient(baseUrl: kApiBaseUrl);
+      return cache.ensureInitialLoaded(api);
+    }).then((ok) {
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('担当者一覧の取得に失敗しました。オンライン時に再試行します。'),
+          ),
+        );
+      }
+    });
+    // 商品キャッシュを初回一括取得で準備（バックグラウンド）
+    final productCache = ProductCache.instance;
+    productCache.init().then((_) {
+      final api = ApiClient(baseUrl: kApiBaseUrl);
+      return productCache.ensureInitialLoaded(api);
+    }).then((ok) {
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('商品一覧の取得に失敗しました。オンライン時に再試行します。'),
+          ),
+        );
+      }
+    });
   }
 
   @override
@@ -54,9 +99,10 @@ class _HomeScreenState extends State<HomeScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _NavBar(
-                  title: '大宮タグリーダーアプリ',
+                  title: '大宮タグリーダーアプリ $kDbLabel',
                   employeeName: _employeeName,
                   connectedDeviceName: _connectedDeviceName,
+                  storageLocationName: _storageLocationName,
                 ),
                 Expanded(
                   child: Padding(
@@ -71,6 +117,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             children: [
                               _MenuButton(
                                 label: 'タグリーダー接続',
+                                backgroundColor: const Color(0xFF90CAF9),
                                 textColor: Colors.black,
                                 onPressed: () async {
                                   await Navigator.of(context).push(
@@ -83,8 +130,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                               const SizedBox(height: 16),
                               _MenuButton(
-                                label: 'タグ読み取り・一覧表示',
-                                backgroundColor: const Color(0xFF9ACD32),
+                                label: 'ICタグ読取・更新',
+                                backgroundColor: const Color(0xFFCDE990),
                                 textColor: Colors.black,
                                 onPressed: () {
                                   Navigator.of(context).push(
@@ -96,13 +143,13 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                               const SizedBox(height: 16),
                               _MenuButton(
-                                label: '伝票一覧',
+                                label: '伝票読込',
                                 backgroundColor: const Color(0xFFFCE4EC),
                                 textColor: const Color(0xFFB71C1C),
                                 onPressed: () {
                                   Navigator.of(context).push(
                                     MaterialPageRoute<void>(
-                                      builder: (context) => const SlipListScreen(showBackButton: true),
+                                      builder: (context) => const SlipLoadScreen(showBackButton: true),
                                     ),
                                   );
                                 },
@@ -110,7 +157,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               const SizedBox(height: 16),
                               _MenuButton(
                                 label: '担当者コード入力',
-                                backgroundColor: const Color(0xFF26A69A),
+                                backgroundColor: const Color(0xFF80CBC4),
                                 textColor: Colors.black,
                                 onPressed: () async {
                                   final updated = await Navigator.of(context).push<bool>(
@@ -122,10 +169,44 @@ class _HomeScreenState extends State<HomeScreen> {
                                 },
                               ),
                               const SizedBox(height: 16),
-                              const _MenuButton(
-                                label: '設定（未実装）',
-                                enabled: false,
+                              _MenuButton(
+                                label: '保管場所選択',
+                                backgroundColor: const Color(0xFFFFCC80),
                                 textColor: Colors.black,
+                                onPressed: () async {
+                                  final updated = await Navigator.of(context).push<bool>(
+                                    MaterialPageRoute(
+                                      builder: (context) => const StorageLocationScreen(showBackButton: true),
+                                    ),
+                                  );
+                                  if (updated == true) _loadStorageLocation();
+                                },
+                              ),
+                              const SizedBox(height: 16),
+                              _MenuButton(
+                                label: '設定',
+                                backgroundColor: const Color(0xFFB0BEC5),
+                                textColor: Colors.black,
+                                onPressed: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (context) => const SettingsScreen(showBackButton: true),
+                                    ),
+                                  );
+                                },
+                              ),
+                              const SizedBox(height: 16),
+                              _MenuButton(
+                                label: 'タグ情報表示',
+                                backgroundColor: const Color(0xFFB39DDB),
+                                textColor: Colors.black,
+                                onPressed: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (context) => const TagInfoScreen(showBackButton: true),
+                                    ),
+                                  );
+                                },
                               ),
                             ],
                           ),
@@ -148,14 +229,28 @@ class _NavBar extends StatelessWidget {
     required this.title,
     this.employeeName,
     this.connectedDeviceName,
+    this.storageLocationName,
   });
 
   final String title;
   final String? employeeName;
   final String? connectedDeviceName;
+  final String? storageLocationName;
 
   @override
   Widget build(BuildContext context) {
+    final hasEmployee = employeeName != null && employeeName!.isNotEmpty;
+    final hasLocation = storageLocationName != null && storageLocationName!.isNotEmpty;
+
+    String? infoLine;
+    if (hasEmployee && hasLocation) {
+      infoLine = '担当: $employeeName  |  保管場所: $storageLocationName';
+    } else if (hasEmployee) {
+      infoLine = '担当: $employeeName';
+    } else if (hasLocation) {
+      infoLine = '保管場所: $storageLocationName';
+    }
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: const BoxDecoration(
@@ -177,10 +272,10 @@ class _NavBar extends StatelessWidget {
               ),
               textAlign: TextAlign.center,
             ),
-            if (employeeName != null && employeeName!.isNotEmpty) ...[
+            if (infoLine != null) ...[
               const SizedBox(height: 4),
               Text(
-                '担当: $employeeName',
+                infoLine,
                 style: const TextStyle(
                   fontSize: 13,
                   color: Color(0xFF666666),

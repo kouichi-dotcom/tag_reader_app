@@ -1,16 +1,69 @@
 # tag_reader_app
 
-A new Flutter project.
+大宮タグリーダーアプリ（Flutter）。ICタグの読取・更新、伝票一覧、担当者コード入力などを提供するデスクトップ/モバイルアプリ。
 
-## Getting Started
+## 主な機能
+
+- **タグリーダー接続** … 接続デバイス設定
+- **ICタグ読取・更新** … タグ一覧表示・ステータス変更・[ICタグ台帳]／[tag_table4] への送信（完成形）
+- **伝票一覧** … 受付台帳API 連携
+- **担当者コード入力** … 担当者コード・氏名の保存
+- **電波強度設定（Android実機）** … 接続中タグリーダーのRF出力(dBm)を変更
+
+## ドキュメント
+
+- [ICタグ読取・更新 機能仕様書](docs/ICタグ読取・更新.md) … 画面・操作・DB連携・テスト機能の最新仕様
+- [API設計](docs/API設計.md) … 商品取得・ランダム取得・商品更新API の仕様
+
+## 技術スタック
+
+- Flutter（Windows / その他プラットフォーム）
+- バックエンド: TagReaderApi（.NET / SQL Server）
+
+## セットアップ
+
+```bash
+flutter pub get
+flutter run -d windows   # または対象デバイス
+```
+
+API のベース URL は `lib/config/api_config.dart` の `kApiBaseUrl` で指定。
+
+## Android（実機タグリーダー接続）セットアップ
+
+このアプリは TSS の Android SDK（`TSS_SDK.aar` と `libDeviceAPI.so`）を **ローカル配置**して動かします（バイナリはリポジトリに含めません）。
+
+### 1) SDKファイルの配置
+
+PowerShellで以下を実行します。
+
+```powershell
+cd C:\dev\tag_reader_app
+.\tools\setup_tss_sdk.ps1
+```
+
+配置先:
+
+- `android/app/libs/TSS_SDK.aar`
+- `android/app/src/main/jniLibs/<arch>/*.so`
+
+### 2) 端末側の事前準備（推奨）
+
+- Androidの設定で、タグリーダー（Bluetooth）を **事前にペアリング**しておく
+- 初回起動時にBluetooth権限の許可を求められたら許可する
+
+### 3) アプリでの確認手順（最短）
+
+- メイン → **「タグリーダー接続」** → **「スキャン」**（ペアリング済み一覧） → 対象デバイスを **「接続」**
+- メイン → **「ICタグ読取・更新」** → **「読取開始」**（EPCが追加されること）
+- メイン → **「タグ情報表示」** → **「読取開始」**（RSSI/CH/TEMP/PH 等が表示されること）
+
+## Getting Started（Flutter）
 
 This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
 
 - [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
 - [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
 
 For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+[online documentation](https://docs.flutter.dev/).
