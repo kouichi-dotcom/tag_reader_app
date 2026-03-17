@@ -3,6 +3,7 @@
 ## 現在の状態
 - ✅ Git リポジトリの初期化済み
 - ✅ 初回コミット済み（145ファイル）
+- ✅ 開発状況をコミット済み（master / MacBook移行用）
 
 ## GitHub にプッシュする手順
 
@@ -36,3 +37,19 @@ git push -u origin main
 - **SSH**: あらかじめ SSH キーを GitHub に登録している必要があります
 
 以上で tag_reader_app が GitHub に保存されます。
+
+---
+
+## MacBook で開発を引き継ぐ場合（プッシュ後）
+
+GitHub にプッシュしたあと、MacBook では次のようにクローンします。
+
+```bash
+# クローン（YOUR_USERNAME を実際のユーザー名に）
+git clone https://github.com/YOUR_USERNAME/tag_reader_app.git
+cd tag_reader_app
+
+# ブランチは master のまま、または main にリネーム済みなら main
+# 依存関係の取得
+flutter pub get
+```
