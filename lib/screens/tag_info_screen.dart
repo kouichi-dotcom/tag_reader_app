@@ -27,6 +27,10 @@ class _TagInfoScreenState extends State<TagInfoScreen> {
 
   final _reader = TagReaderService.instance;
   StreamSubscription<InventoryEpc>? _sub;
+  StreamSubscription<Map<String, dynamic>>? _debugSub;
+  String _lastEventType = '';
+  int _eventCount = 0;
+  String? _streamError;
 
   Future<({bool channel, bool temp, bool phase})> _capsForConnectedReader() async {
     // SDK上、付加情報の CH/TEMP/PH は DOTR-2000/3000/R-5000 系でのみ有効。
@@ -41,7 +45,9 @@ class _TagInfoScreenState extends State<TagInfoScreen> {
     if (_isReading) {
       await _reader.stopInventory();
       await _sub?.cancel();
+      await _debugSub?.cancel();
       _sub = null;
+      _debugSub = null;
       if (mounted) setState(() => _isReading = false);
       return;
     }
@@ -49,6 +55,9 @@ class _TagInfoScreenState extends State<TagInfoScreen> {
     setState(() {
       _isReading = true;
       _items.clear();
+      _lastEventType = '';
+      _eventCount = 0;
+      _streamError = null;
     });
 
     if (_reader.isAndroid) {
@@ -72,6 +81,20 @@ class _TagInfoScreenState extends State<TagInfoScreen> {
       }
 
       await _sub?.cancel();
+      await _debugSub?.cancel();
+      _debugSub = _reader.events.listen(
+        (e) {
+          if (!mounted || !_isReading) return;
+          final type = e['type'] as String? ?? '';
+          setState(() {
+            _lastEventType = type;
+            _eventCount++;
+          });
+        },
+        onError: (err, st) {
+          if (mounted) setState(() => _streamError = err.toString());
+        },
+      );
       _sub = _reader.inventoryEpcStream.listen((inv) {
         if (!mounted || !_isReading) return;
         final full = _TagFullInfo.fromInventory(inv);
@@ -92,7 +115,9 @@ class _TagInfoScreenState extends State<TagInfoScreen> {
           const SnackBar(content: Text('読取開始に失敗しました（接続状態を確認してください）。')),
         );
         await _sub?.cancel();
+        await _debugSub?.cancel();
         _sub = null;
+        _debugSub = null;
         setState(() => _isReading = false);
       }
       return;
@@ -134,6 +159,7 @@ class _TagInfoScreenState extends State<TagInfoScreen> {
   @override
   void dispose() {
     _sub?.cancel();
+    _debugSub?.cancel();
     _reader.stopInventory();
     super.dispose();
   }
@@ -179,6 +205,21 @@ class _TagInfoScreenState extends State<TagInfoScreen> {
                         _isReading ? '読取中…' : '停止中',
                         style: const TextStyle(fontSize: 13, color: Color(0xFF666666)),
                       ),
+                      if (_isReading && (_lastEventType.isNotEmpty || _streamError != null)) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          _streamError != null
+                              ? 'エラー: $_streamError'
+                              : '受信イベント: $_lastEventType (${_eventCount}件)',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF888888),
+                            fontFamily: 'monospace',
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
                     ],
                   ),
                 ),

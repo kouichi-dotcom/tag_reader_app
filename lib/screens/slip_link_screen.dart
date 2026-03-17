@@ -1,10 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
 import '../config/api_config.dart';
 import '../mocks/mock_data.dart';
+import '../models/inventory_epc.dart';
+import '../models/product_by_epc.dart';
 import '../models/reception_slip.dart';
 import '../services/employee_cache.dart';
+import '../services/product_cache.dart';
+import '../services/tag_ledger_cache.dart';
+import '../services/tag_reader_service.dart';
 import '../theme/app_design.dart';
 
 /// 伝票・商品紐付け画面（design/screen7 の link-overlay 準拠）
@@ -31,9 +38,24 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
   /// 担当者コードから取得した担当者名（伝票に handlerName が無い場合に EmployeeCache で解決）
   String? _resolvedHandlerName;
 
+  /// 実機タグ読取中か（Android のみ使用）
+  bool _isLinkingReading = false;
+  final _reader = TagReaderService.instance;
+  StreamSubscription<InventoryEpc>? _linkInvSub;
+  StreamSubscription<bool>? _linkTriggerSub;
+
+  @override
+  void dispose() {
+    _linkTriggerSub?.cancel();
+    _linkInvSub?.cancel();
+    _reader.stopInventory();
+    super.dispose();
+  }
+
   @override
   void initState() {
     super.initState();
+    if (_reader.isAndroid) _listenLinkTrigger();
     final initial = widget.initialLinkedProducts;
     if (initial != null && initial.isNotEmpty) {
       _products.addAll(initial);
@@ -53,9 +75,9 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
     }
   }
 
+  /// モック用: 非 Android で「読み取り」ボタン押下時
   void _readTags() {
     setState(() {
-      // モック: プールから 2〜3 件ずつ追加（重複しないよう id に通番）
       final start = _readCounter % mockLinkProductPool.length;
       final count = 2 + (_readCounter % 2);
       for (var i = 0; i < count; i++) {
@@ -68,6 +90,119 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
         ));
       }
       _readCounter++;
+    });
+  }
+
+  /// 実機読取停止（ボタン・トリガー両方から利用）
+  Future<void> _stopLinkingRead() async {
+    await _linkInvSub?.cancel();
+    _linkInvSub = null;
+    await _reader.stopInventory();
+    if (mounted) setState(() => _isLinkingReading = false);
+  }
+
+  /// 実機読取開始（ボタン・トリガー両方から利用）。Android 以外では何もしない。
+  Future<void> _startLinkingRead() async {
+    if (_isLinkingReading) return;
+    if (!_reader.isAndroid) return;
+
+    final okPerm = await _reader.requestBluetoothPermissions();
+    final okConn = await _reader.isConnected();
+    if (!mounted) return;
+    if (!okPerm) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Bluetooth権限が必要です。設定から許可してください。')),
+      );
+      return;
+    }
+    if (!okConn) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('タグリーダーが未接続です。先に「タグリーダー接続」で接続してください。')),
+      );
+      return;
+    }
+
+    setState(() => _isLinkingReading = true);
+    await _linkInvSub?.cancel();
+    _linkInvSub = _reader.inventoryEpcStream.listen((inv) async {
+      if (!mounted || !_isLinkingReading) return;
+      final epc = inv.epcForLookup;
+      if (_products.any((p) => p.id == epc)) return;
+
+      // まずローカル台帳＋商品台帳で照合（APIが使えない開発時も本番同様に表示）
+      await TagLedgerCache.instance.init();
+      await ProductCache.instance.init();
+      final entry = TagLedgerCache.instance.lookup(epc);
+      if (entry != null) {
+        final name = ProductCache.instance.getNameFromMemory(entry.productCode?.toString() ?? '') ?? '商品不明';
+        if (!mounted) return;
+        setState(() {
+          _products.add(MockLinkProduct(
+            id: epc,
+            name: name,
+            code: entry.productCode?.toString() ?? '--',
+            status: '不明',
+          ));
+        });
+        return;
+      }
+
+      // Android では API を呼ばず「商品不明」で追加
+      if (!kUseApi) {
+        if (!mounted) return;
+        setState(() {
+          _products.add(MockLinkProduct(id: epc, name: '商品不明', code: '--', status: '不明'));
+        });
+        return;
+      }
+
+      final api = ApiClient(baseUrl: kApiBaseUrl);
+      ProductByEpc? p;
+      try {
+        p = await api.fetchProduct(epc);
+      } catch (_) {}
+      if (!mounted) return;
+      final name = (p == null || p.productName.isEmpty) ? '商品不明' : p.productName;
+      final code = p?.productCode?.toString() ?? '--';
+      final status = (p == null || p.status.isEmpty) ? '不明' : p.status;
+      setState(() {
+        _products.add(MockLinkProduct(id: epc, name: name, code: code, status: status));
+      });
+    });
+
+    final ok = await _reader.startInventory(
+      dateTime: true,
+      radioPower: true,
+      channel: true,
+      temp: false,
+      phase: false,
+    );
+    if (!mounted) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('読取開始に失敗しました（接続状態を確認してください）。')),
+      );
+      await _stopLinkingRead();
+    }
+  }
+
+  void _toggleLinkingRead() {
+    if (_isLinkingReading) {
+      _stopLinkingRead();
+    } else {
+      _startLinkingRead();
+    }
+  }
+
+  void _listenLinkTrigger() {
+    _linkTriggerSub?.cancel();
+    _linkTriggerSub = _reader.triggerStream.listen((pressed) async {
+      if (!mounted) return;
+      if (pressed) {
+        if (!_isLinkingReading) await _startLinkingRead();
+      } else {
+        if (_isLinkingReading) await _stopLinkingRead();
+      }
     });
   }
 
@@ -207,21 +342,30 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
                             _InfoLine(label: '商品・台数', value: _detailsSummary(slip)),
                           ],
                         ),
-                        // 読み取りボタン
+                        // 読み取りボタン（Android: 実機読取開始/停止、それ以外: モック）
                         Padding(
                           padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                           child: SizedBox(
                             width: double.infinity,
                             child: ElevatedButton(
-                              onPressed: _readTags,
+                              onPressed: _reader.isAndroid
+                                  ? _toggleLinkingRead
+                                  : _readTags,
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: AppDesign.primaryButton,
+                                backgroundColor: _reader.isAndroid && _isLinkingReading
+                                    ? AppDesign.stopButton
+                                    : AppDesign.primaryButton,
                                 foregroundColor: Colors.white,
                                 padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                                 elevation: 0,
                               ),
-                              child: const Text('商品をタグリーダーから読み取り', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                              child: Text(
+                                _reader.isAndroid
+                                    ? (_isLinkingReading ? '読取停止' : '読取開始')
+                                    : '商品をタグリーダーから読み取り',
+                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                              ),
                             ),
                           ),
                         ),

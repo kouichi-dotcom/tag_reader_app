@@ -16,6 +16,9 @@ const bool kUseLocalApi = true;
 String get kApiBaseUrl =>
     kUseLocalApi ? _impl.getApiBaseUrl() : 'https://tagreader-api-fqgkazd5frb7daa5.japanwest-01.azurewebsites.net';
 
+/// Android では false（API 呼び出しなし・JSON のみ）。Windows などでは true（API 使用）。
+bool get kUseApi => _impl.useApi;
+
 /// API から取得した環境（Production = 本番DB）。未取得時は null。
 bool? _isProductionFromApi;
 
@@ -31,7 +34,9 @@ bool get kIsProductionDb => _isProductionFromApi ?? _urlBasedIsProduction();
 String get kDbLabel => kIsProductionDb ? '(本番DB)' : '(ローカルDB)';
 
 /// API の環境を取得してキャッシュ。起動時に呼ぶと、localhost でも本番プロファイルで動いている API なら (本番DB) になる。
+/// Android では API に接続しないためスキップする。
 Future<void> fetchAndCacheApiEnvironment() async {
+  if (!kUseApi) return;
   try {
     final base = kApiBaseUrl.endsWith('/') ? kApiBaseUrl : '$kApiBaseUrl/';
     final uri = Uri.parse('${base}api/environment');

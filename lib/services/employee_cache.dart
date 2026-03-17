@@ -1,8 +1,10 @@
 import 'dart:convert';
 
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/api_client.dart';
+import '../config/api_config.dart';
 import '../models/employee.dart';
 
 const String _keyCacheJson = 'employee_cache_json';
@@ -19,6 +21,7 @@ class EmployeeCache {
   bool _initLoaded = false;
 
   /// 永続キャッシュを読み込みメモリに展開する。
+  /// 永続が空の場合は assets/data/employees.json を読み込む（Android・APIなし時用）。
   Future<void> init() async {
     if (_initLoaded) return;
     final prefs = await SharedPreferences.getInstance();
@@ -36,13 +39,27 @@ class EmployeeCache {
         // パース失敗時はメモリのみ空のまま
       }
     }
+    if (_namesByCode.isEmpty) {
+      try {
+        final assetStr = await rootBundle.loadString('assets/data/employees.json');
+        final list = jsonDecode(assetStr) as List<dynamic>;
+        for (final e in list) {
+          final m = e as Map<String, dynamic>;
+          final code = (m['employeeCode'] as num?)?.toInt();
+          final name = m['employeeName'] as String? ?? '';
+          if (code != null) _namesByCode[code.toString()] = name;
+        }
+      } catch (_) {}
+    }
     _initLoaded = true;
   }
 
   /// キャッシュが空または TTL 切れなら 1〜101 を一括取得して永続・メモリを更新する。
   /// 一括取得を試みて失敗した場合 false、それ以外は true。
+  /// Android（kUseApi=false）では API を呼ばず、init() で読み込んだ JSON のみ使用する。
   Future<bool> ensureInitialLoaded(ApiClient api) async {
     await init();
+    if (!kUseApi) return true; // Android: API 呼び出しなし
     final prefs = await SharedPreferences.getInstance();
     final lastUpdated = prefs.getInt(_keyLastUpdated);
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -59,7 +76,6 @@ class EmployeeCache {
         await _persist();
         return true;
       } catch (_) {
-        // 失敗時は既存キャッシュのまま（空なら空）。オンデマンドで補える
         return false;
       }
     }
@@ -84,12 +100,13 @@ class EmployeeCache {
     return k.isEmpty ? null : _namesByCode[k];
   }
 
-  /// 担当者名を解決する。メモリ → 永続再読込は行わず API のみ → なければ API でオンデマンド取得してキャッシュ更新。
+  /// 担当者名を解決する。メモリにあれば返す。Android では API を呼ばず JSON のみ。
   Future<String?> resolveName(ApiClient api, String code) async {
     await init();
     final k = code.trim();
     if (k.isEmpty) return null;
     if (_namesByCode.containsKey(k)) return _namesByCode[k];
+    if (!kUseApi) return null; // Android: API 呼び出しなし
     final emp = await api.fetchEmployee(code);
     if (emp != null) {
       _namesByCode[emp.employeeCode.toString()] = emp.employeeName;

@@ -23,6 +23,8 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
   List<MockBleDevice> _scannedBleDevices = [];
   MockBleDevice? _connectedDevice;
   bool _isScanning = false;
+  bool _isConnecting = false;
+  MockBleDevice? _connectingDevice;
   String? _firmwareVersion;
 
   final _reader = TagReaderService.instance;
@@ -33,11 +35,12 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
   void initState() {
     super.initState();
     _loadSavedConnection();
-    _sub = _reader.events.listen((e) {
+    _sub = _reader.events.listen((e) async {
       if (!mounted) return;
       switch (e['type']) {
         case 'connected':
-          setState(() {});
+          await _stopScan();
+          if (mounted) setState(() {});
           break;
         case 'disconnected':
         case 'link_lost':
@@ -65,9 +68,20 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
   Future<void> _loadSavedConnection() async {
     final id = await ConnectedDeviceStorage.getId();
     final name = await ConnectedDeviceStorage.getName();
-    if (id != null && name != null && mounted) {
-      setState(() => _connectedDevice = MockBleDevice(id: id, name: name));
+    if (id == null || name == null || !mounted) return;
+    // Android: 実態の接続状態を確認。アプリ再起動後は接続が切れているので未接続に合わせる
+    if (_reader.isAndroid) {
+      final actuallyConnected = await _reader.isConnected();
+      if (!actuallyConnected && mounted) {
+        setState(() {
+          _connectedDevice = null;
+          _firmwareVersion = null;
+        });
+        await ConnectedDeviceStorage.clear();
+        return;
+      }
     }
+    if (mounted) setState(() => _connectedDevice = MockBleDevice(id: id, name: name));
   }
 
   Future<void> _startScan() async {
@@ -147,15 +161,27 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
       return;
     }
 
+    setState(() {
+      _isConnecting = true;
+      _connectingDevice = device;
+    });
+
     try {
       final ok = await _reader.connect(name: device.name, address: device.id);
       if (!mounted) return;
+      setState(() {
+        _isConnecting = false;
+        _connectingDevice = null;
+      });
       if (!ok) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('接続に失敗しました（端末のBluetoothペアリングを確認してください）。')),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('接続に失敗しました（端末のBluetoothペアリングを確認してください）。')),
+          );
+        }
         return;
       }
+      await _stopScan();
       final fw = await _reader.getFirmwareVersion();
       if (!mounted) return;
       setState(() {
@@ -165,6 +191,10 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
       ConnectedDeviceStorage.save(device.id, device.name);
     } catch (e) {
       if (mounted) {
+        setState(() {
+          _isConnecting = false;
+          _connectingDevice = null;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('接続失敗: $e')),
         );
@@ -204,13 +234,20 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
 
   Widget _deviceCard(MockBleDevice device) {
     final isConnected = _connectedDevice?.id == device.id;
+    final isThisConnecting = _connectingDevice?.id == device.id;
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
-        leading: Icon(
-          isConnected ? Icons.bluetooth_connected : Icons.bluetooth,
-          color: isConnected ? AppDesign.statusOk : null,
-        ),
+        leading: isThisConnecting
+            ? const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(
+                isConnected ? Icons.bluetooth_connected : Icons.bluetooth,
+                color: isConnected ? AppDesign.statusOk : null,
+              ),
         title: Text(device.name),
         subtitle: Text(device.id, style: const TextStyle(fontSize: 12)),
         trailing: isConnected
@@ -225,17 +262,35 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
                 ),
                 child: const Text('切断'),
               )
-            : ElevatedButton(
-                onPressed: () {
-                  _connect(device);
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppDesign.primaryButton,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                ),
-                child: const Text('接続'),
-              ),
+            : isThisConnecting
+                ? Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        const SizedBox(width: 8),
+                        const Text('接続中...', style: TextStyle(fontSize: 14)),
+                      ],
+                    ),
+                  )
+                : ElevatedButton(
+                    onPressed: _isConnecting
+                        ? null
+                        : () {
+                            _connect(device);
+                          },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppDesign.primaryButton,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                    ),
+                    child: const Text('接続'),
+                  ),
       ),
     );
   }
@@ -262,24 +317,35 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
                   padding: const EdgeInsets.all(16),
                   color: _connectedDevice != null
                       ? AppDesign.linkedBackground
-                      : const Color(0xFFF0F0F0),
+                      : _isConnecting
+                          ? const Color(0xFFE8F4FD)
+                          : const Color(0xFFF0F0F0),
                   child: Row(
                     children: [
-                      Icon(
-                        _connectedDevice != null ? Icons.link : Icons.link_off,
-                        size: 28,
-                        color: _connectedDevice != null ? AppDesign.statusOk : const Color(0xFF666666),
-                      ),
+                      if (_isConnecting)
+                        const SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      else
+                        Icon(
+                          _connectedDevice != null ? Icons.link : Icons.link_off,
+                          size: 28,
+                          color: _connectedDevice != null ? AppDesign.statusOk : const Color(0xFF666666),
+                        ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          _connectedDevice != null
-                              ? '接続中: ${_connectedDevice!.name}${_firmwareVersion != null ? '（FW: $_firmwareVersion）' : ''}'
-                              : '未接続',
+                          _isConnecting
+                              ? '接続中: ${_connectingDevice?.name ?? ''}'
+                              : _connectedDevice != null
+                                  ? '接続中: ${_connectedDevice!.name}${_firmwareVersion != null ? '（FW: $_firmwareVersion）' : ''}'
+                                  : '未接続',
                           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
                         ),
                       ),
-                      if (_connectedDevice != null)
+                      if (_connectedDevice != null && !_isConnecting)
                         TextButton(
                           onPressed: () {
                             _disconnect();

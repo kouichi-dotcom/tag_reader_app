@@ -4,13 +4,15 @@ import '../api/api_client.dart';
 import '../config/api_config.dart';
 import '../services/connected_device_storage.dart';
 import '../services/employee_cache.dart';
+import '../services/tag_reader_service.dart';
 import '../services/employee_storage.dart';
 import '../services/product_cache.dart';
 import '../services/storage_location_storage.dart';
+import '../services/tag_ledger_cache.dart';
 import '../theme/app_design.dart';
 import 'device_connection_screen.dart';
 import 'employee_code_screen.dart';
-import 'settings_screen.dart';
+import 'radio_power_screen.dart';
 import 'slip_load_screen.dart';
 import 'storage_location_screen.dart';
 import 'tag_info_screen.dart';
@@ -37,6 +39,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadConnectedDevice() async {
     final name = await ConnectedDeviceStorage.getName();
+    // Android: 実態が未接続なら表示を合わせる（アプリ再起動後など）
+    if (name != null &&
+        name.isNotEmpty &&
+        TagReaderService.instance.isAndroid &&
+        !(await TagReaderService.instance.isConnected())) {
+      await ConnectedDeviceStorage.clear();
+      if (mounted) setState(() => _connectedDeviceName = null);
+      return;
+    }
     if (mounted) setState(() => _connectedDeviceName = name);
   }
 
@@ -78,6 +89,8 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     });
+    // 台帳キャッシュ（assets の tag_ledger.json）を読み込み（開発時・APIなし時の照合用）
+    TagLedgerCache.instance.init();
   }
 
   @override
@@ -184,13 +197,13 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                               const SizedBox(height: 16),
                               _MenuButton(
-                                label: '設定',
+                                label: '出力設定',
                                 backgroundColor: const Color(0xFFB0BEC5),
                                 textColor: Colors.black,
                                 onPressed: () {
                                   Navigator.of(context).push(
                                     MaterialPageRoute<void>(
-                                      builder: (context) => const SettingsScreen(showBackButton: true),
+                                      builder: (context) => const RadioPowerScreen(showBackButton: true),
                                     ),
                                   );
                                 },

@@ -56,6 +56,16 @@ class _SlipListScreenState extends State<SlipListScreen> {
 
   Future<void> _fetchSlips() async {
     setState(() => _fetching = true);
+    if (!kUseApi) {
+      if (mounted) {
+        setState(() {
+          _fetching = false;
+          _displaySlips = [];
+        });
+        showAppNotification(context, '伝票一覧はAPI接続時（Windowsなど）のみ利用できます。');
+      }
+      return;
+    }
     try {
       final api = ApiClient(baseUrl: kApiBaseUrl);
       final filter = widget.filter ?? SlipListFilter.all;

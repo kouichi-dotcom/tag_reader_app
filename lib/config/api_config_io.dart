@@ -7,3 +7,6 @@ String getApiBaseUrl() {
   }
   return 'http://localhost:5262';
 }
+
+/// Android では API を使わず JSON のみ。Windows などでは API を使用する。
+bool get useApi => !Platform.isAndroid;

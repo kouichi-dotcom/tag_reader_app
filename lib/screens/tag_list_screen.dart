@@ -7,7 +7,9 @@ import '../config/api_config.dart';
 import '../models/inventory_epc.dart';
 import '../models/product_update_request.dart';
 import '../services/employee_storage.dart';
+import '../services/product_cache.dart';
 import '../services/storage_location_storage.dart';
+import '../services/tag_ledger_cache.dart';
 import '../services/tag_reader_service.dart';
 import '../theme/app_design.dart';
 import '../widgets/app_notification.dart';
@@ -65,6 +67,7 @@ class _TagListScreenState extends State<TagListScreen> {
 
   final _reader = TagReaderService.instance;
   StreamSubscription<InventoryEpc>? _invSub;
+  StreamSubscription<bool>? _triggerSub;
 
   int get _pendingCount => _selectedForSend.length;
 
@@ -80,9 +83,15 @@ class _TagListScreenState extends State<TagListScreen> {
     return _reads[index].status.isEmpty ? '不明' : _reads[index].status;
   }
 
-  /// テスト用: API からランダムに1件取得し、読み取りとして追加
+  /// テスト用: API からランダムに1件取得し、読み取りとして追加（WindowsなどAPI接続時のみ）
   Future<void> _addRandomRead() async {
     if (_randomLoading) return;
+    if (!kUseApi) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('読み取りシミュレートはAPI接続時（Windowsなど）のみ利用できます。')),
+      );
+      return;
+    }
     setState(() => _randomLoading = true);
     try {
       final api = ApiClient(baseUrl: kApiBaseUrl);
@@ -119,112 +128,183 @@ class _TagListScreenState extends State<TagListScreen> {
     }
   }
 
-  Future<void> _toggleRead() async {
-    if (_isReading) {
-      await _reader.stopInventory();
-      await _invSub?.cancel();
-      _invSub = null;
-      if (mounted) setState(() => _isReading = false);
-      return;
-    }
+  /// 読取停止（ボタン・トリガー両方から利用）
+  Future<void> _stopInventoryAndState() async {
+    await _invSub?.cancel();
+    _invSub = null;
+    await _reader.stopInventory();
+    if (mounted) setState(() => _isReading = false);
+  }
+
+  /// 読取開始（ボタン・トリガー両方から利用）。Android 以外では何もしない。
+  Future<void> _startInventoryIfReady() async {
+    if (_isReading) return;
+    if (!_reader.isAndroid) return;
 
     setState(() => _isReading = true);
 
-    // Android実機: inventory開始してEPCイベントを一覧に追加
-    if (_reader.isAndroid) {
-      final okPerm = await _reader.requestBluetoothPermissions();
-      final okConn = await _reader.isConnected();
-      if (!mounted) return;
-      if (!okPerm) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Bluetooth権限が必要です。設定から許可してください。')),
-        );
-        setState(() => _isReading = false);
-        return;
-      }
-      if (!okConn) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('タグリーダーが未接続です。先に「タグリーダー接続」で接続してください。')),
-        );
-        setState(() => _isReading = false);
-        return;
-      }
+    final okPerm = await _reader.requestBluetoothPermissions();
+    final okConn = await _reader.isConnected();
+    if (!mounted) return;
+    if (!okPerm) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Bluetooth権限が必要です。設定から許可してください。')),
+      );
+      setState(() => _isReading = false);
+      return;
+    }
+    if (!okConn) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('タグリーダーが未接続です。先に「タグリーダー接続」で接続してください。')),
+      );
+      setState(() => _isReading = false);
+      return;
+    }
 
-      await _invSub?.cancel();
-      _invSub = _reader.inventoryEpcStream.listen((inv) {
-        if (!mounted || !_isReading) return;
-        final epc = inv.epcForLookup;
-        final readAt = _formatNow();
+    await _invSub?.cancel();
+    _invSub = _reader.inventoryEpcStream.listen((inv) async {
+      if (!mounted || !_isReading) return;
+      final epc = inv.epcForLookup;
+      // 重複排除: 既に同じ EPC が一覧にあれば追加しない
+      if (_reads.any((r) => r.epc == epc)) return;
 
-        final idx = _reads.length;
+      final readAt = _formatNow();
+
+      final idx = _reads.length;
+      setState(() {
+        _reads.add(_TagReadItem(
+          epc: epc,
+          productName: '照合中…',
+          status: '不明',
+          readAt: readAt,
+        ));
+      });
+
+      // まずローカル台帳＋商品台帳で照合（APIが使えない開発時も本番同様に表示）
+      await TagLedgerCache.instance.init();
+      await ProductCache.instance.init();
+      final entry = TagLedgerCache.instance.lookup(epc);
+      if (entry != null) {
+        final productName = ProductCache.instance.getNameFromMemory(entry.productCode?.toString() ?? '') ?? '商品不明';
+        if (!mounted) return;
         setState(() {
-          _reads.add(_TagReadItem(
-            epc: epc,
-            productName: '照合中…',
-            status: '不明',
-            readAt: readAt,
-          ));
-        });
-
-        // 可能ならAPIで商品情報を補完（未接続/未整備の場合は失敗してもOK）
-        final api = ApiClient(baseUrl: kApiBaseUrl);
-        api.fetchProduct(epc).then((p) {
-          if (!mounted) return;
-          if (p == null) {
-            setState(() {
-              if (idx < _reads.length) {
-                final cur = _reads[idx];
-                _reads[idx] = _TagReadItem(
-                  epc: cur.epc,
-                  productName: '商品不明',
-                  status: cur.status,
-                  readAt: cur.readAt,
-                  productCode: cur.productCode,
-                  number: cur.number,
-                );
-              }
-            });
-            return;
+          if (idx < _reads.length) {
+            final cur = _reads[idx];
+            _reads[idx] = _TagReadItem(
+              epc: cur.epc,
+              productName: productName,
+              status: '不明',
+              readAt: cur.readAt,
+              productCode: entry.productCode,
+              number: entry.number,
+            );
           }
+        });
+        return;
+      }
+
+      // Android では API を呼ばず「商品不明」で確定
+      if (!kUseApi) {
+        if (!mounted) return;
+        setState(() {
+          if (idx < _reads.length) {
+            final cur = _reads[idx];
+            _reads[idx] = _TagReadItem(
+              epc: cur.epc,
+              productName: '商品不明',
+              status: cur.status,
+              readAt: cur.readAt,
+              productCode: cur.productCode,
+              number: cur.number,
+            );
+          }
+        });
+        return;
+      }
+
+      final api = ApiClient(baseUrl: kApiBaseUrl);
+      api.fetchProduct(epc).then((p) {
+        if (!mounted) return;
+        if (p == null) {
           setState(() {
             if (idx < _reads.length) {
               final cur = _reads[idx];
               _reads[idx] = _TagReadItem(
                 epc: cur.epc,
-                productName: p.productName.isEmpty ? '商品不明' : p.productName,
-                status: p.status.isEmpty ? '不明' : p.status,
+                productName: '商品不明',
+                status: cur.status,
                 readAt: cur.readAt,
-                productCode: p.productCode,
-                number: p.number,
+                productCode: cur.productCode,
+                number: cur.number,
               );
             }
           });
-        }).catchError((_) {
-          // オフライン/未構築でも読取自体は続ける
+          return;
+        }
+        setState(() {
+          if (idx < _reads.length) {
+            final cur = _reads[idx];
+            _reads[idx] = _TagReadItem(
+              epc: cur.epc,
+              productName: p.productName.isEmpty ? '商品不明' : p.productName,
+              status: p.status.isEmpty ? '不明' : p.status,
+              readAt: cur.readAt,
+              productCode: p.productCode,
+              number: p.number,
+            );
+          }
         });
-      });
+      }).catchError((_) {});
+    });
 
-      final ok = await _reader.startInventory(
-        dateTime: true,
-        radioPower: true,
-        channel: true,
-        temp: false,
-        phase: false,
+    final ok = await _reader.startInventory(
+      dateTime: true,
+      radioPower: true,
+      channel: true,
+      temp: false,
+      phase: false,
+    );
+    if (!mounted) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('読取開始に失敗しました（接続状態を確認してください）。')),
       );
-      if (!mounted) return;
-      if (!ok) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('読取開始に失敗しました（接続状態を確認してください）。')),
-        );
-        await _invSub?.cancel();
-        _invSub = null;
-        setState(() => _isReading = false);
-      }
+      await _invSub?.cancel();
+      _invSub = null;
+      setState(() => _isReading = false);
     }
+  }
+
+  /// トリガー: 1回押しで読取ON、もう1回押しでOFF（トグルに統一）。
+  void _listenTrigger() {
+    _triggerSub?.cancel();
+    _triggerSub = _reader.triggerStream.listen((pressed) async {
+      if (!mounted || !pressed) return;
+      if (_isReading) {
+        await _stopInventoryAndState();
+      } else {
+        await _startInventoryIfReady();
+      }
+    });
+  }
+
+  Future<void> _toggleRead() async {
+    if (_isReading) {
+      await _stopInventoryAndState();
+      return;
+    }
+    await _startInventoryIfReady();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (_reader.isAndroid) _listenTrigger();
   }
 
   @override
   void dispose() {
+    _triggerSub?.cancel();
     _invSub?.cancel();
     _reader.stopInventory();
     super.dispose();
@@ -345,6 +425,10 @@ class _TagListScreenState extends State<TagListScreen> {
   Future<void> _sendSelected() async {
     final toSend = Set<int>.from(_selectedForSend);
     if (toSend.isEmpty) return;
+    if (!kUseApi) {
+      showAppNotification(context, 'Androidでは送信できません。API接続時（Windowsなど）のみ送信可能です。');
+      return;
+    }
 
     final api = ApiClient(baseUrl: kApiBaseUrl);
     final userId = await EmployeeStorage.getCode();
@@ -427,22 +511,31 @@ class _TagListScreenState extends State<TagListScreen> {
                         _isReading ? '読取中…' : '停止中',
                         style: const TextStyle(fontSize: 13, color: Color(0xFF666666)),
                       ),
-                      const SizedBox(height: 12),
-                      OutlinedButton.icon(
-                        onPressed: _randomLoading ? null : _addRandomRead,
-                        icon: _randomLoading
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.shuffle, size: 18),
-                        label: Text(_randomLoading ? '取得中…' : 'テスト: ランダムに1件読み取り'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF666666),
-                          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+                      if (_reader.isAndroid) ...[
+                        const SizedBox(height: 4),
+                        const Text(
+                          'トリガー: 1回押しで読取ON、もう1回押しでOFF',
+                          style: TextStyle(fontSize: 12, color: Color(0xFF888888)),
                         ),
-                      ),
+                      ],
+                      if (!_reader.isAndroid) ...[
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          onPressed: _randomLoading ? null : _addRandomRead,
+                          icon: _randomLoading
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.shuffle, size: 18),
+                          label: Text(_randomLoading ? '取得中…' : 'テスト: ランダムに1件読み取り'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF666666),
+                            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -500,8 +593,11 @@ class _TagListScreenState extends State<TagListScreen> {
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  '「テスト: ランダムに1件読み取り」でAPIから取得',
+                                  _reader.isAndroid
+                                      ? '読取開始ボタンまたはリーダーのトリガー（押している間）で読み取れます'
+                                      : '「テスト: ランダムに1件読み取り」でAPIから取得',
                                   style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                                  textAlign: TextAlign.center,
                                 ),
                               ],
                             ),
@@ -542,15 +638,7 @@ class _TagListScreenState extends State<TagListScreen> {
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(
-                                        'EPC: ${tag.epc}',
-                                        style: const TextStyle(
-                                          fontSize: 11,
-                                          color: Color(0xFF888888),
-                                          fontFamily: 'monospace',
-                                        ),
-                                      ),
-                                      const SizedBox(height: 2),
+                                      // EPC は画面に表示しない（スペースを商品コード・番号・ステータスに割り当てる）
                                       Row(
                                         children: [
                                           Expanded(
@@ -561,8 +649,9 @@ class _TagListScreenState extends State<TagListScreen> {
                                                 if (tag.number != null) '番号: ${tag.number}',
                                               ].join(),
                                               style: const TextStyle(
-                                                fontSize: 12,
-                                                color: Color(0xFF666666),
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w600,
+                                                color: Color(0xFF455A64),
                                               ),
                                             ),
                                           ),
@@ -583,7 +672,7 @@ class _TagListScreenState extends State<TagListScreen> {
                                           ),
                                         ],
                                       ),
-                                      const SizedBox(height: 4),
+                                      const SizedBox(height: 6),
                                       Row(
                                         children: [
                                           Expanded(

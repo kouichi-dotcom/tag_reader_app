@@ -90,7 +90,9 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
     }
 
     private fun emitEvent(map: Map<String, Any?>) {
-        eventSink?.success(map)
+        runOnUiThread {
+            eventSink?.success(map)
+        }
     }
 
     private fun requiredBtPermissions(): Array<String> {

@@ -42,6 +42,16 @@ class TagReaderService {
         .map((e) => InventoryEpc.parse((e['raw'] as String?) ?? ''));
   }
 
+  /// R-5000: trigger_changed, SR7: scan_trigger_changed をマージしたトリガー押下/離しのストリーム。
+  /// Android 以外では空ストリーム。
+  Stream<bool> get triggerStream {
+    if (!isAndroid) return Stream<bool>.empty();
+    return events
+        .where((e) =>
+            e['type'] == 'trigger_changed' || e['type'] == 'scan_trigger_changed')
+        .map((e) => e['trigger'] as bool? ?? false);
+  }
+
   Future<bool> requestBluetoothPermissions() async {
     if (!isAndroid) return true;
     final ok = await _method.invokeMethod<bool>('requestBluetoothPermissions');
