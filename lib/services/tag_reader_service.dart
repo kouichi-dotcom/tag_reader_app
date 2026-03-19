@@ -99,7 +99,7 @@ class TagReaderService {
     bool channel = true,
     bool temp = false,
     bool phase = false,
-    bool noRepeat = false,
+    bool noRepeat = true,
   }) async {
     if (!isAndroid) return false;
     final ok = await _method.invokeMethod<bool>('startInventory', {

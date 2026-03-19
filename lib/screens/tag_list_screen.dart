@@ -263,6 +263,7 @@ class _TagListScreenState extends State<TagListScreen> {
       channel: true,
       temp: false,
       phase: false,
+      noRepeat: true,
     );
     if (!mounted) return;
     if (!ok) {

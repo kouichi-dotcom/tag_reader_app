@@ -176,6 +176,7 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
       channel: true,
       temp: false,
       phase: false,
+      noRepeat: true,
     );
     if (!mounted) return;
     if (!ok) {

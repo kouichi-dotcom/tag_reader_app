@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>案F: ホームで出力モード4択</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: #f5f5f5; }
+    .phone {
+      max-width: 360px;
+      margin: 0 auto;
+      background: #fff;
+      min-height: 100vh;
+      box-shadow: 0 0 20px rgba(0,0,0,.08);
+      padding-bottom: 24px;
+    }
+    .nav {
+      padding: 12px 16px;
+      background: #fafafa;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .nav h1 { margin: 0; font-size: 17px; font-weight: 600; text-align: center; }
+    .nav .info { font-size: 13px; color: #666; text-align: center; margin-top: 4px; }
+    .wrap { padding: 18px 16px; }
+    .menu-col { display: flex; flex-direction: column; gap: 12px; }
+
+    .menu-btn {
+      width: 280px;
+      margin: 0 auto;
+      padding: 14px 18px;
+      border-radius: 12px;
+      border: 1px solid #000;
+      font-size: 16px;
+      font-weight: 600;
+      text-align: center;
+      cursor: pointer;
+      background: #90CAF9;
+      color: #000;
+    }
+
+    .output-modes {
+      width: 280px;
+      margin: 0 auto;
+      border: 1px solid #000;
+      border-radius: 12px;
+      background: #F5F5F5;
+      padding: 10px 12px 12px;
+    }
+    .output-modes .title {
+      font-weight: 800;
+      font-size: 13px;
+      margin-bottom: 0;
+    }
+
+    .mode-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .apply-inline {
+      border-radius: 10px;
+      padding: 10px 12px;
+      border: 1px solid #00897B;
+      background: #00897B;
+      color: #fff;
+      cursor: pointer;
+      font-weight: 900;
+      font-size: 13px;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+
+    .mode-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .mode-btn {
+      width: 100%;
+      text-align: left;
+      border-radius: 10px;
+      padding: 10px 10px;
+      border: 1px solid #d0d0d0;
+      background: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      transition: background .15s ease, border-color .15s ease;
+    }
+    .mode-btn:active { background: #f2f2f2; }
+    .mode-btn .label {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-weight: 900;
+      color: #111;
+      line-height: 1.1;
+    }
+
+    .mode-btn .label-main {
+      font-size: 13px;
+    }
+
+    .mode-btn .label-sub {
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .mode-btn .pill {
+      flex: 0 0 auto;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 1.5px solid #bdbdbd;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 900;
+    }
+    .mode-btn[data-selected="true"] {
+      border-color: #00897B;
+      background: #E0F2F1;
+    }
+    .mode-btn[data-selected="true"] .pill {
+      background: #00897B;
+      border-color: #00897B;
+    }
+
+    .action-row {
+      width: 280px;
+      margin: 10px auto 0;
+      display: flex;
+      gap: 10px;
+    }
+    .btn {
+      flex: 1;
+      border-radius: 10px;
+      padding: 10px 10px;
+      border: 1px solid #d0d0d0;
+      background: #fff;
+      cursor: pointer;
+      font-weight: 800;
+      color: #333;
+    }
+    .btn.primary {
+      border-color: #00897B;
+      background: #00897B;
+      color: #fff;
+    }
+
+    .note {
+      width: 280px;
+      margin: 10px auto 0;
+      font-size: 11px;
+      color: #888;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <div class="phone">
+    <header class="nav">
+      <h1>大宮タグリーダーアプリ（ローカルDB）</h1>
+      <div class="info">接続中: DOTR-900J</div>
+      <div class="info">担当: 宮城宏一 | 保管場所: 山川</div>
+    </header>
+
+    <div class="wrap">
+      <div class="menu-col">
+        <button class="menu-btn" style="background:#90CAF9;">タグリーダー接続</button>
+        <button class="menu-btn" style="background:#CDE990;">ICタグ読取・更新</button>
+        <button class="menu-btn" style="background:#FCE4EC; color:#B71C1C;">伝票読込</button>
+        <button class="menu-btn" style="background:#80CBC4;">担当者コード入力</button>
+        <button class="menu-btn" style="background:#FFCC80;">保管場所選択</button>
+
+        <!-- ここを「出力設定」ではなく、ホームで4択にする -->
+        <section class="output-modes" aria-label="出力モード選択">
+          <div class="mode-header">
+            <div class="title">出力モード</div>
+            <button class="apply-inline" type="button" id="applyBtn">適用</button>
+          </div>
+
+          <div class="mode-grid" role="radiogroup" aria-label="出力モード">
+            <button class="mode-btn" type="button" data-mode="hand" data-selected="true">
+              <div>
+                <div class="label">
+                  <div class="label-main">手元</div>
+                  <div class="label-sub">（3-5）</div>
+                </div>
+              </div>
+              <div class="pill">✓</div>
+            </button>
+
+            <button class="mode-btn" type="button" data-mode="near" data-selected="false">
+              <div>
+                <div class="label">
+                  <div class="label-main">近距離</div>
+                  <div class="label-sub">（15-30）</div>
+                </div>
+              </div>
+              <div class="pill" style="opacity:.0;">✓</div>
+            </button>
+
+            <button class="mode-btn" type="button" data-mode="mid" data-selected="false">
+              <div>
+                <div class="label">
+                  <div class="label-main">中距離</div>
+                  <div class="label-sub">（30-50）</div>
+                </div>
+              </div>
+              <div class="pill" style="opacity:.0;">✓</div>
+            </button>
+
+            <button class="mode-btn" type="button" data-mode="far" data-selected="false">
+              <div>
+                <div class="label">
+                  <div class="label-main">遠距離</div>
+                  <div class="label-sub">（1m20）</div>
+                </div>
+              </div>
+              <div class="pill" style="opacity:.0;">✓</div>
+            </button>
+          </div>
+        </section>
+
+        <div class="note" style="margin-top: 8px;">
+          モックです。実装時は選択したモードを内部の `decreaseDecibel` に反映します。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const buttons = Array.from(document.querySelectorAll(".mode-btn"));
+    const applyBtn = document.getElementById("applyBtn");
+
+    function setSelected(mode) {
+      for (const b of buttons) {
+        const isSelected = b.dataset.mode === mode;
+        b.dataset.selected = isSelected ? "true" : "false";
+        const pill = b.querySelector(".pill");
+        if (pill) pill.style.opacity = isSelected ? "1" : "0";
+      }
+    }
+
+    for (const b of buttons) {
+      b.addEventListener("click", () => setSelected(b.dataset.mode));
+    }
+
+    applyBtn.addEventListener("click", () => {
+      const selected = buttons.find(b => b.dataset.selected === "true");
+      const label = selected ? selected.querySelector(".label")?.textContent : "";
+      alert("適用（モック）: " + (label || "-"));
+    });
+  </script>
+</body>
+</html>
+

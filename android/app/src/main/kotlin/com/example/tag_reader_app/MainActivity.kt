@@ -32,6 +32,8 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
     private val reqCodeBtPermissions = 1001
 
     private var bleScanner: BluetoothLeScanner? = null
+    private val epcCooldownMs: Long = 30_000L
+    private val epcLastNotifiedAt = mutableMapOf<String, Long>()
     private val bleScanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val device = result.device ?: return
@@ -84,6 +86,8 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
                 "getRadioPower" -> handleGetRadioPower(result)
                 "getMaxRadioPower" -> handleGetMaxRadioPower(result)
                 "setRadioPower" -> handleSetRadioPower(call, result)
+                "setBeeperVolumeMin" -> handleSetBeeperVolumeMin(result)
+                "setGoodReadBeepOff" -> handleSetGoodReadBeepOff(result)
                 else -> result.notImplemented()
             }
         }
@@ -93,6 +97,28 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
         runOnUiThread {
             eventSink?.success(map)
         }
+    }
+
+    private fun shouldEmitInventoryEpc(rawEpc: String): Boolean {
+        val epc = rawEpc.trim()
+        if (epc.isEmpty()) return false
+
+        val now = System.currentTimeMillis()
+        val last = epcLastNotifiedAt[epc]
+        if (last != null && now - last < epcCooldownMs) {
+            return false
+        }
+        epcLastNotifiedAt[epc] = now
+
+        // Keep memory bounded by removing entries inactive for >2 cooldown windows.
+        if (epcLastNotifiedAt.size > 2048) {
+            val expireBefore = now - (epcCooldownMs * 2)
+            val it = epcLastNotifiedAt.entries.iterator()
+            while (it.hasNext()) {
+                if (it.next().value < expireBefore) it.remove()
+            }
+        }
+        return true
     }
 
     private fun requiredBtPermissions(): Array<String> {
@@ -285,6 +311,7 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
         val noRepeat = call.argument<Boolean>("noRepeat") ?: false
 
         runCatching {
+            epcLastNotifiedAt.clear()
             rfidUtil.setNoRepeat(noRepeat)
             if (!noRepeat) {
                 rfidUtil.clearAccessEPCList()
@@ -335,7 +362,124 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
         }
     }
 
+    private fun handleSetBeeperVolumeMin(result: MethodChannel.Result) {
+        if (!ensureConnected(result)) return
+        runCatching {
+            trySetBeeperVolumeMin()
+        }.onSuccess { ok ->
+            result.success(ok)
+        }.onFailure { e ->
+            result.error("set_beeper_volume_failed", e.message, null)
+        }
+    }
+
+    private fun handleSetGoodReadBeepOff(result: MethodChannel.Result) {
+        if (!ensureConnected(result)) return
+        runCatching {
+            trySetGoodReadBeepOff()
+        }.onSuccess { ok ->
+            result.success(ok)
+        }.onFailure { e ->
+            result.error("set_good_read_beep_off_failed", e.message, null)
+        }
+    }
+
+    private fun trySetBeeperVolumeMin(): Boolean {
+        // SDK version differences are handled by trying method candidates via reflection.
+        val target = rfidUtil
+        val clazz = target.javaClass
+
+        val intCandidates = listOf("setBeeperVolume", "setBeepVolume", "setBuzzerVolume", "setVolume")
+        for (name in intCandidates) {
+            val m = clazz.methods.firstOrNull {
+                it.name == name && it.parameterTypes.size == 1 && it.parameterTypes[0] == Int::class.javaPrimitiveType
+            } ?: continue
+            val r = m.invoke(target, 0)
+            return (r as? Boolean) ?: true
+        }
+
+        val objCandidates = listOf("setBeeperVolume", "setBeepVolume", "setBuzzerVolume")
+        for (name in objCandidates) {
+            val m = clazz.methods.firstOrNull { it.name == name && it.parameterTypes.size == 1 } ?: continue
+            val p = m.parameterTypes[0]
+            runCatching {
+                when {
+                    p == String::class.java -> {
+                        val r = m.invoke(target, "MIN")
+                        return (r as? Boolean) ?: true
+                    }
+                    p.isEnum -> {
+                        val values = p.enumConstants ?: emptyArray<Any>()
+                        val minLike = values.firstOrNull {
+                            val s = it.toString().uppercase()
+                            s.contains("MIN") || s.contains("LOW")
+                        } ?: values.firstOrNull()
+                        if (minLike != null) {
+                            val r = m.invoke(target, minLike)
+                            return (r as? Boolean) ?: true
+                        }
+                    }
+                }
+            }
+        }
+
+        return false
+    }
+
+    private fun trySetGoodReadBeepOff(): Boolean {
+        // SDK version differences are handled by trying method candidates via reflection.
+        val target = rfidUtil
+        val clazz = target.javaClass
+
+        // Simple boolean switches.
+        val boolCandidates = listOf(
+            "setGoodReadBeep",
+            "setGoodReadBeeper",
+            "setInventoryBeep",
+            "setReadBeep",
+            "setBeepOnRead"
+        )
+        for (name in boolCandidates) {
+            val m = clazz.methods.firstOrNull {
+                it.name == name && it.parameterTypes.size == 1 && it.parameterTypes[0] == Boolean::class.javaPrimitiveType
+            } ?: continue
+            val r = m.invoke(target, false)
+            return (r as? Boolean) ?: true
+        }
+
+        // Mode setters (string/enum): try OFF-like value.
+        val modeCandidates = listOf("setBeeperMode", "setBeepMode", "setReadBeepMode", "setGoodReadBeepMode")
+        for (name in modeCandidates) {
+            val m = clazz.methods.firstOrNull { it.name == name && it.parameterTypes.size == 1 } ?: continue
+            val p = m.parameterTypes[0]
+            runCatching {
+                when {
+                    p == String::class.java -> {
+                        val r = m.invoke(target, "OFF")
+                        return (r as? Boolean) ?: true
+                    }
+                    p.isEnum -> {
+                        val values = p.enumConstants ?: emptyArray<Any>()
+                        val offLike = values.firstOrNull {
+                            val s = it.toString().uppercase()
+                            s.contains("OFF") || s.contains("NONE") || s.contains("DISABLE")
+                        } ?: values.firstOrNull()
+                        if (offLike != null) {
+                            val r = m.invoke(target, offLike)
+                            return (r as? Boolean) ?: true
+                        }
+                    }
+                }
+            }
+        }
+
+        return false
+    }
+
     override fun onConnected() {
+        // Best effort: if SDK supports it, turn off success beep first, then lower beeper volume.
+        runCatching { trySetGoodReadBeepOff() }
+        runCatching { trySetBeeperVolumeMin() }
         emitEvent(mapOf("type" to "connected"))
         val ver = runCatching { rfidUtil.firmwareVersion }.getOrNull()
         if (!ver.isNullOrBlank()) {
@@ -344,6 +488,7 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
     }
 
     override fun onDisconnected() {
+        epcLastNotifiedAt.clear()
         emitEvent(mapOf("type" to "disconnected"))
     }
 
@@ -356,6 +501,7 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
     }
 
     override fun onInventoryEPC(epc: String) {
+        if (!shouldEmitInventoryEpc(epc)) return
         emitEvent(mapOf("type" to "inventory_epc", "raw" to epc))
     }
 

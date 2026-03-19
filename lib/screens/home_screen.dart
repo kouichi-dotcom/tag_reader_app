@@ -7,16 +7,60 @@ import '../services/employee_cache.dart';
 import '../services/tag_reader_service.dart';
 import '../services/employee_storage.dart';
 import '../services/product_cache.dart';
+import '../services/radio_power_storage.dart';
 import '../services/storage_location_storage.dart';
 import '../services/tag_ledger_cache.dart';
 import '../theme/app_design.dart';
 import 'device_connection_screen.dart';
 import 'employee_code_screen.dart';
-import 'radio_power_screen.dart';
+import 'settings_screen.dart';
 import 'slip_load_screen.dart';
 import 'storage_location_screen.dart';
-import 'tag_info_screen.dart';
 import 'tag_list_screen.dart';
+
+enum _OutputMode { hand, near, mid, far }
+
+extension on _OutputMode {
+  String get mainLabel {
+    switch (this) {
+      case _OutputMode.hand:
+        return '手元';
+      case _OutputMode.near:
+        return '近距離';
+      case _OutputMode.mid:
+        return '中距離';
+      case _OutputMode.far:
+        return '遠距離';
+    }
+  }
+
+  String get subLabel {
+    switch (this) {
+      case _OutputMode.hand:
+        return '（3-5）';
+      case _OutputMode.near:
+        return '（15-30）';
+      case _OutputMode.mid:
+        return '（30-50）';
+      case _OutputMode.far:
+        return '（最大1m20）';
+    }
+  }
+
+  /// ターゲットdBm目安（内部変換用）
+  int get targetDbm {
+    switch (this) {
+      case _OutputMode.hand:
+        return 4; // 3-5 の中間
+      case _OutputMode.near:
+        return 15;
+      case _OutputMode.mid:
+        return 20;
+      case _OutputMode.far:
+        return 30;
+    }
+  }
+}
 
 /// メイン画面（design/index.html 準拠）
 /// タグリーダー接続・タグ読み取り・伝票一覧・従業員コード入力・設定への入口
@@ -31,6 +75,13 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _employeeName;
   String? _connectedDeviceName;
   String? _storageLocationName;
+
+  static const Color _outputTeal = Color(0xFF00897B);
+  static const Color _outputTealBg = Color(0xFFE0F2F1);
+
+  final _reader = TagReaderService.instance;
+
+  _OutputMode _selectedOutputMode = _OutputMode.hand;
 
   Future<void> _loadEmployee() async {
     final name = await EmployeeStorage.getName();
@@ -56,11 +107,249 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) setState(() => _storageLocationName = name);
   }
 
+  static const int _maxDecreaseDecibel = 30;
+
+  _OutputMode _dbmToMode(int dbm) {
+    final v = dbm.clamp(0, _maxDecreaseDecibel);
+    if (v <= 5) return _OutputMode.hand;
+    if (v <= 15) return _OutputMode.near;
+    if (v <= 20) return _OutputMode.mid;
+    return _OutputMode.far;
+  }
+
+  Future<void> _loadOutputMode() async {
+    final storedDecrease = await RadioPowerStorage.getDecreaseDecibel();
+    final storedDbm = (30 - storedDecrease).clamp(0, 30);
+    var mode = _dbmToMode(storedDbm);
+
+    if (_reader.isAndroid) {
+      try {
+        final connected = await _reader.isConnected();
+        if (connected) {
+          final currentDbm = await _reader.getRadioPower();
+          if (currentDbm != null && currentDbm > 0) {
+            mode = _dbmToMode(currentDbm);
+          }
+        }
+      } catch (_) {
+        // 読めなかった場合は保存値のまま
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _selectedOutputMode = mode;
+    });
+  }
+
+  int _modeToTargetDbm(_OutputMode mode) => mode.targetDbm;
+
+  Future<void> _applyOutputMode(_OutputMode mode) async {
+    final targetDbm = _modeToTargetDbm(mode);
+
+    int maxDbm = 30;
+    bool connected = false;
+    if (_reader.isAndroid) {
+      try {
+        connected = await _reader.isConnected();
+        if (connected) {
+          final deviceMaxDbm = await _reader.getMaxRadioPower();
+          if (deviceMaxDbm != null && deviceMaxDbm > 0) {
+            maxDbm = deviceMaxDbm;
+          }
+        }
+      } catch (_) {
+        // 読めなかった場合は既定（30）のまま
+      }
+    }
+
+    final decreaseDecibel = (maxDbm - targetDbm).clamp(0, _maxDecreaseDecibel);
+    await RadioPowerStorage.saveDecreaseDecibel(decreaseDecibel);
+
+    String message;
+    if (_reader.isAndroid) {
+      try {
+        if (connected) {
+          final ok = await _reader.setRadioPower(decreaseDecibel);
+          message = ok
+              ? '出力モードを「${mode.mainLabel}${mode.subLabel}」に設定しました。'
+              : '出力モードの反映に失敗しました（接続状態を確認してください）。';
+        } else {
+          message = '出力モードを保存しました。接続後に反映されます。';
+        }
+      } catch (e) {
+        message = '出力モードの反映に失敗しました: $e';
+      }
+    } else {
+      message = '出力モードを保存しました（Androidではありません）。';
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _selectedOutputMode = mode;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Widget _buildOutputModePicker() {
+    const tileRadius = 10.0;
+    const tilePadding = EdgeInsets.all(10);
+    const tileBorderWidth = 1.0;
+
+    Color tileBorderColor(_OutputMode m) => m == _selectedOutputMode
+        ? _outputTeal
+        : Colors.grey.shade300;
+    Color tileBg(_OutputMode m) => m == _selectedOutputMode ? _outputTealBg : Colors.white;
+
+    Widget tile(_OutputMode m) {
+      final selected = m == _selectedOutputMode;
+      return InkWell(
+        borderRadius: BorderRadius.circular(tileRadius),
+        onTap: () => setState(() => _selectedOutputMode = m),
+        child: Container(
+          padding: tilePadding,
+          decoration: BoxDecoration(
+            color: tileBg(m),
+            borderRadius: BorderRadius.circular(tileRadius),
+            border: Border.all(color: tileBorderColor(m), width: tileBorderWidth),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      m.mainLabel,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.black,
+                        height: 1.1,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      m.subLabel,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.black,
+                        height: 1.1,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                width: 18,
+                height: 18,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: selected ? _outputTeal : Colors.grey.shade400,
+                    width: 1.5,
+                  ),
+                  color: selected ? _outputTeal : Colors.transparent,
+                ),
+                child: Center(
+                  child: Opacity(
+                    opacity: selected ? 1 : 0,
+                    child: Icon(
+                      Icons.check,
+                      size: 12,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      width: 280,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F5F5),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.black, width: 1),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  '出力モード',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.black,
+                  ),
+                ),
+              ),
+              ElevatedButton(
+                onPressed: () => _applyOutputMode(_selectedOutputMode),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _outputTeal,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: const Text(
+                  '適用',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          GridView.count(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            crossAxisCount: 2,
+            mainAxisSpacing: 8,
+            crossAxisSpacing: 8,
+            childAspectRatio: 2.4,
+            children: [
+              tile(_OutputMode.hand),
+              tile(_OutputMode.near),
+              tile(_OutputMode.mid),
+              tile(_OutputMode.far),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _loadAll() async {
     // API の環境（本番/開発）を取得し、ヘッダーの (本番DB)/(ローカルDB) を正しく表示
     await fetchAndCacheApiEnvironment();
     if (mounted) setState(() {});
-    await Future.wait([_loadEmployee(), _loadConnectedDevice(), _loadStorageLocation()]);
+    await Future.wait([
+      _loadEmployee(),
+      _loadConnectedDevice(),
+      _loadStorageLocation(),
+      _loadOutputMode(),
+    ]);
     // 担当者キャッシュを初回一括取得で準備（バックグラウンド）
     final cache = EmployeeCache.instance;
     cache.init().then((_) {
@@ -169,20 +458,6 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                               const SizedBox(height: 16),
                               _MenuButton(
-                                label: '担当者コード入力',
-                                backgroundColor: const Color(0xFF80CBC4),
-                                textColor: Colors.black,
-                                onPressed: () async {
-                                  final updated = await Navigator.of(context).push<bool>(
-                                    MaterialPageRoute(
-                                      builder: (context) => const EmployeeCodeScreen(showBackButton: true),
-                                    ),
-                                  );
-                                  if (updated == true) _loadEmployee();
-                                },
-                              ),
-                              const SizedBox(height: 16),
-                              _MenuButton(
                                 label: '保管場所選択',
                                 backgroundColor: const Color(0xFFFFCC80),
                                 textColor: Colors.black,
@@ -197,30 +472,21 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                               const SizedBox(height: 16),
                               _MenuButton(
-                                label: '出力設定',
-                                backgroundColor: const Color(0xFFB0BEC5),
+                                label: '設定',
+                                backgroundColor: const Color(0xFFB2DFDB),
                                 textColor: Colors.black,
-                                onPressed: () {
-                                  Navigator.of(context).push(
+                                onPressed: () async {
+                                  await Navigator.of(context).push(
                                     MaterialPageRoute<void>(
-                                      builder: (context) => const RadioPowerScreen(showBackButton: true),
+                                      builder: (context) => const SettingsScreen(showBackButton: true),
                                     ),
                                   );
+                                  if (!mounted) return;
+                                  await _loadOutputMode();
                                 },
                               ),
                               const SizedBox(height: 16),
-                              _MenuButton(
-                                label: 'タグ情報表示',
-                                backgroundColor: const Color(0xFFB39DDB),
-                                textColor: Colors.black,
-                                onPressed: () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute<void>(
-                                      builder: (context) => const TagInfoScreen(showBackButton: true),
-                                    ),
-                                  );
-                                },
-                              ),
+                              _buildOutputModePicker(),
                             ],
                           ),
                         ),

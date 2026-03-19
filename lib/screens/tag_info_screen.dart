@@ -108,6 +108,7 @@ class _TagInfoScreenState extends State<TagInfoScreen> {
         channel: caps.channel,
         temp: caps.temp,
         phase: caps.phase,
+        noRepeat: true,
       );
       if (!mounted) return;
       if (!ok) {
