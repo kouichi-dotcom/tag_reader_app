@@ -1,0 +1,416 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 48;
+	objects = {
+
+/* Begin PBXContainerItemProxy section */
+		2092CB891FC750FF000AF059 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 2092CB841FC750FD000AF059 /* BarcodeScan.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 2092CB5D1FC750FD000AF059;
+			remoteInfo = BarcodeScan;
+		};
+		2092CB8B1FC750FF000AF059 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 2092CB841FC750FD000AF059 /* BarcodeScan.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 2092CB751FC750FD000AF059;
+			remoteInfo = BarcodeScanTests;
+		};
+		603DAFEC1FBD8766008596A6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 603DAFE71FBD8765008596A6 /* InventoryTag.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 70F6582A1B0197AA00825292;
+			remoteInfo = InventoryTag;
+		};
+		603DAFEE1FBD8766008596A6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 603DAFE71FBD8765008596A6 /* InventoryTag.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 70F658461B0197AB00825292;
+			remoteInfo = InventoryTagTests;
+		};
+		603DAFFE1FBD8779008596A6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 603DAFF91FBD8778008596A6 /* ReadTag.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 70F6582A1B0197AA00825292;
+			remoteInfo = ReadTag;
+		};
+		603DB0001FBD8779008596A6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 603DAFF91FBD8778008596A6 /* ReadTag.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 70F658461B0197AB00825292;
+			remoteInfo = ReadTagTests;
+		};
+		603DB0071FBD8780008596A6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 603DB0021FBD8780008596A6 /* UploadTag.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 70F6582A1B0197AA00825292;
+			remoteInfo = UploadTag;
+		};
+		603DB0091FBD8780008596A6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 603DB0021FBD8780008596A6 /* UploadTag.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 70F658461B0197AB00825292;
+			remoteInfo = UploadTagTests;
+		};
+		603DB0101FBD8787008596A6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 603DB00B1FBD8787008596A6 /* WriteTag.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 70F6582A1B0197AA00825292;
+			remoteInfo = WriteTag;
+		};
+		603DB0121FBD8787008596A6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 603DB00B1FBD8787008596A6 /* WriteTag.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 70F658461B0197AB00825292;
+			remoteInfo = WriteTagTests;
+		};
+		603DB0191FBD87D8008596A6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 603DB0141FBD87D8008596A6 /* ConfigReader.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 70F6582A1B0197AA00825292;
+			remoteInfo = ConfigReader;
+		};
+		603DB01B1FBD87D8008596A6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 603DB0141FBD87D8008596A6 /* ConfigReader.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 70F658461B0197AB00825292;
+			remoteInfo = ConfigReaderTests;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		2092CB841FC750FD000AF059 /* BarcodeScan.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; name = BarcodeScan.xcodeproj; path = BarcodeScan/BarcodeScan.xcodeproj; sourceTree = "<group>"; };
+		603DAFE71FBD8765008596A6 /* InventoryTag.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; name = InventoryTag.xcodeproj; path = InventoryTag/InventoryTag.xcodeproj; sourceTree = "<group>"; };
+		603DAFF91FBD8778008596A6 /* ReadTag.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; name = ReadTag.xcodeproj; path = ReadTag/ReadTag.xcodeproj; sourceTree = "<group>"; };
+		603DB0021FBD8780008596A6 /* UploadTag.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; name = UploadTag.xcodeproj; path = UploadTag/UploadTag.xcodeproj; sourceTree = "<group>"; };
+		603DB00B1FBD8787008596A6 /* WriteTag.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; name = WriteTag.xcodeproj; path = WriteTag/WriteTag.xcodeproj; sourceTree = "<group>"; };
+		603DB0141FBD87D8008596A6 /* ConfigReader.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; name = ConfigReader.xcodeproj; path = ConfigReader/ConfigReader.xcodeproj; sourceTree = "<group>"; };
+		603DB0221FBD99EA008596A6 /* DOTR_Util.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = DOTR_Util.h; sourceTree = "<group>"; };
+		603DB0231FBD99EA008596A6 /* libDOTR_Util.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libDOTR_Util.a; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		2092CB851FC750FD000AF059 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				2092CB8A1FC750FF000AF059 /* BarcodeScan.app */,
+				2092CB8C1FC750FF000AF059 /* BarcodeScanTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		603DAFCA1FBD863B008596A6 = {
+			isa = PBXGroup;
+			children = (
+				603DB01F1FBD99EA008596A6 /* Library */,
+				603DB0141FBD87D8008596A6 /* ConfigReader.xcodeproj */,
+				603DAFE71FBD8765008596A6 /* InventoryTag.xcodeproj */,
+				603DAFF91FBD8778008596A6 /* ReadTag.xcodeproj */,
+				603DB0021FBD8780008596A6 /* UploadTag.xcodeproj */,
+				603DB00B1FBD8787008596A6 /* WriteTag.xcodeproj */,
+				2092CB841FC750FD000AF059 /* BarcodeScan.xcodeproj */,
+			);
+			sourceTree = "<group>";
+		};
+		603DAFE81FBD8765008596A6 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				603DAFED1FBD8766008596A6 /* InventoryTag.app */,
+				603DAFEF1FBD8766008596A6 /* InventoryTagTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		603DAFFA1FBD8778008596A6 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				603DAFFF1FBD8779008596A6 /* ReadTag.app */,
+				603DB0011FBD8779008596A6 /* ReadTagTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		603DB0031FBD8780008596A6 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				603DB0081FBD8780008596A6 /* UploadTag.app */,
+				603DB00A1FBD8780008596A6 /* UploadTag.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		603DB00C1FBD8787008596A6 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				603DB0111FBD8787008596A6 /* WriteTag.app */,
+				603DB0131FBD8787008596A6 /* WriteTagTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		603DB0151FBD87D8008596A6 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				603DB01A1FBD87D8008596A6 /* ConfigReader.app */,
+				603DB01C1FBD87D8008596A6 /* ConfigReaderTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		603DB01F1FBD99EA008596A6 /* Library */ = {
+			isa = PBXGroup;
+			children = (
+				603DB0201FBD99EA008596A6 /* DOTR_IOS */,
+			);
+			path = Library;
+			sourceTree = "<group>";
+		};
+		603DB0201FBD99EA008596A6 /* DOTR_IOS */ = {
+			isa = PBXGroup;
+			children = (
+				603DB0211FBD99EA008596A6 /* Headers */,
+				603DB0231FBD99EA008596A6 /* libDOTR_Util.a */,
+			);
+			path = DOTR_IOS;
+			sourceTree = "<group>";
+		};
+		603DB0211FBD99EA008596A6 /* Headers */ = {
+			isa = PBXGroup;
+			children = (
+				603DB0221FBD99EA008596A6 /* DOTR_Util.h */,
+			);
+			path = Headers;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXProject section */
+		603DAFCB1FBD863B008596A6 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 1000;
+			};
+			buildConfigurationList = 603DAFCE1FBD863B008596A6 /* Build configuration list for PBXProject "DOTRSamples" */;
+			compatibilityVersion = "Xcode 8.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+			);
+			mainGroup = 603DAFCA1FBD863B008596A6;
+			projectDirPath = "";
+			projectReferences = (
+				{
+					ProductGroup = 2092CB851FC750FD000AF059 /* Products */;
+					ProjectRef = 2092CB841FC750FD000AF059 /* BarcodeScan.xcodeproj */;
+				},
+				{
+					ProductGroup = 603DB0151FBD87D8008596A6 /* Products */;
+					ProjectRef = 603DB0141FBD87D8008596A6 /* ConfigReader.xcodeproj */;
+				},
+				{
+					ProductGroup = 603DAFE81FBD8765008596A6 /* Products */;
+					ProjectRef = 603DAFE71FBD8765008596A6 /* InventoryTag.xcodeproj */;
+				},
+				{
+					ProductGroup = 603DAFFA1FBD8778008596A6 /* Products */;
+					ProjectRef = 603DAFF91FBD8778008596A6 /* ReadTag.xcodeproj */;
+				},
+				{
+					ProductGroup = 603DB0031FBD8780008596A6 /* Products */;
+					ProjectRef = 603DB0021FBD8780008596A6 /* UploadTag.xcodeproj */;
+				},
+				{
+					ProductGroup = 603DB00C1FBD8787008596A6 /* Products */;
+					ProjectRef = 603DB00B1FBD8787008596A6 /* WriteTag.xcodeproj */;
+				},
+			);
+			projectRoot = "";
+			targets = (
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXReferenceProxy section */
+		2092CB8A1FC750FF000AF059 /* BarcodeScan.app */ = {
+			isa = PBXReferenceProxy;
+			fileType = wrapper.application;
+			path = BarcodeScan.app;
+			remoteRef = 2092CB891FC750FF000AF059 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		2092CB8C1FC750FF000AF059 /* BarcodeScanTests.xctest */ = {
+			isa = PBXReferenceProxy;
+			fileType = wrapper.cfbundle;
+			path = BarcodeScanTests.xctest;
+			remoteRef = 2092CB8B1FC750FF000AF059 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		603DAFED1FBD8766008596A6 /* InventoryTag.app */ = {
+			isa = PBXReferenceProxy;
+			fileType = wrapper.application;
+			path = InventoryTag.app;
+			remoteRef = 603DAFEC1FBD8766008596A6 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		603DAFEF1FBD8766008596A6 /* InventoryTagTests.xctest */ = {
+			isa = PBXReferenceProxy;
+			fileType = wrapper.cfbundle;
+			path = InventoryTagTests.xctest;
+			remoteRef = 603DAFEE1FBD8766008596A6 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		603DAFFF1FBD8779008596A6 /* ReadTag.app */ = {
+			isa = PBXReferenceProxy;
+			fileType = wrapper.application;
+			path = ReadTag.app;
+			remoteRef = 603DAFFE1FBD8779008596A6 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		603DB0011FBD8779008596A6 /* ReadTagTests.xctest */ = {
+			isa = PBXReferenceProxy;
+			fileType = wrapper.cfbundle;
+			path = ReadTagTests.xctest;
+			remoteRef = 603DB0001FBD8779008596A6 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		603DB0081FBD8780008596A6 /* UploadTag.app */ = {
+			isa = PBXReferenceProxy;
+			fileType = wrapper.application;
+			path = UploadTag.app;
+			remoteRef = 603DB0071FBD8780008596A6 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		603DB00A1FBD8780008596A6 /* UploadTag.xctest */ = {
+			isa = PBXReferenceProxy;
+			fileType = wrapper.cfbundle;
+			path = UploadTag.xctest;
+			remoteRef = 603DB0091FBD8780008596A6 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		603DB0111FBD8787008596A6 /* WriteTag.app */ = {
+			isa = PBXReferenceProxy;
+			fileType = wrapper.application;
+			path = WriteTag.app;
+			remoteRef = 603DB0101FBD8787008596A6 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		603DB0131FBD8787008596A6 /* WriteTagTests.xctest */ = {
+			isa = PBXReferenceProxy;
+			fileType = wrapper.cfbundle;
+			path = WriteTagTests.xctest;
+			remoteRef = 603DB0121FBD8787008596A6 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		603DB01A1FBD87D8008596A6 /* ConfigReader.app */ = {
+			isa = PBXReferenceProxy;
+			fileType = wrapper.application;
+			path = ConfigReader.app;
+			remoteRef = 603DB0191FBD87D8008596A6 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		603DB01C1FBD87D8008596A6 /* ConfigReaderTests.xctest */ = {
+			isa = PBXReferenceProxy;
+			fileType = wrapper.cfbundle;
+			path = ConfigReaderTests.xctest;
+			remoteRef = 603DB01B1FBD87D8008596A6 /* PBXContainerItemProxy */;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+/* End PBXReferenceProxy section */
+
+/* Begin XCBuildConfiguration section */
+		603DAFCF1FBD863B008596A6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				ONLY_ACTIVE_ARCH = YES;
+			};
+			name = Debug;
+		};
+		603DAFD01FBD863B008596A6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		603DAFCE1FBD863B008596A6 /* Build configuration list for PBXProject "DOTRSamples" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				603DAFCF1FBD863B008596A6 /* Debug */,
+				603DAFD01FBD863B008596A6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 603DAFCB1FBD863B008596A6 /* Project object */;
+}
