@@ -31,6 +31,9 @@ class TagReaderService {
 
   bool get isAndroid => Platform.isAndroid;
 
+  /// Android / iOS 実機の TSS RFID ネイティブブリッジが有効なとき true（Windows 等はモック）。
+  bool get supportsNativeRfid => Platform.isAndroid || Platform.isIOS;
+
   Stream<Map<String, dynamic>> get events {
     _rawEventStream ??= _events.receiveBroadcastStream();
     return _rawEventStream!.map((e) => Map<String, dynamic>.from(e as Map));
@@ -43,9 +46,9 @@ class TagReaderService {
   }
 
   /// R-5000: trigger_changed, SR7: scan_trigger_changed をマージしたトリガー押下/離しのストリーム。
-  /// Android 以外では空ストリーム。
+  /// ネイティブRFID未対応のプラットフォームでは空ストリーム。
   Stream<bool> get triggerStream {
-    if (!isAndroid) return Stream<bool>.empty();
+    if (!supportsNativeRfid) return Stream<bool>.empty();
     return events
         .where((e) =>
             e['type'] == 'trigger_changed' || e['type'] == 'scan_trigger_changed')
@@ -53,13 +56,13 @@ class TagReaderService {
   }
 
   Future<bool> requestBluetoothPermissions() async {
-    if (!isAndroid) return true;
+    if (!supportsNativeRfid) return true;
     final ok = await _method.invokeMethod<bool>('requestBluetoothPermissions');
     return ok ?? false;
   }
 
   Future<List<BondedDevice>> getBondedDevices() async {
-    if (!isAndroid) return const [];
+    if (!supportsNativeRfid) return const [];
     final list = await _method.invokeMethod<List<dynamic>>('getBondedDevices');
     final devices = (list ?? const [])
         .map((e) => BondedDevice.fromJson(e as Map<dynamic, dynamic>))
@@ -69,17 +72,17 @@ class TagReaderService {
   }
 
   Future<void> startBleScan() async {
-    if (!isAndroid) return;
+    if (!supportsNativeRfid) return;
     await _method.invokeMethod<void>('startBleScan');
   }
 
   Future<void> stopBleScan() async {
-    if (!isAndroid) return;
+    if (!supportsNativeRfid) return;
     await _method.invokeMethod<void>('stopBleScan');
   }
 
   Future<bool> connect({required String name, required String address}) async {
-    if (!isAndroid) return false;
+    if (!supportsNativeRfid) return false;
     final ok = await _method.invokeMethod<bool>('connect', {
       'name': name,
       'address': address,
@@ -88,7 +91,7 @@ class TagReaderService {
   }
 
   Future<bool> disconnect() async {
-    if (!isAndroid) return false;
+    if (!supportsNativeRfid) return false;
     final ok = await _method.invokeMethod<bool>('disconnect');
     return ok ?? false;
   }
@@ -101,7 +104,7 @@ class TagReaderService {
     bool phase = false,
     bool noRepeat = true,
   }) async {
-    if (!isAndroid) return false;
+    if (!supportsNativeRfid) return false;
     final ok = await _method.invokeMethod<bool>('startInventory', {
       'dateTime': dateTime,
       'radioPower': radioPower,
@@ -114,36 +117,36 @@ class TagReaderService {
   }
 
   Future<bool> stopInventory() async {
-    if (!isAndroid) return false;
+    if (!supportsNativeRfid) return false;
     final ok = await _method.invokeMethod<bool>('stopInventory');
     return ok ?? false;
   }
 
   Future<bool> isConnected() async {
-    if (!isAndroid) return false;
+    if (!supportsNativeRfid) return false;
     final ok = await _method.invokeMethod<bool>('isConnected');
     return ok ?? false;
   }
 
   Future<String?> getFirmwareVersion() async {
-    if (!isAndroid) return null;
+    if (!supportsNativeRfid) return null;
     return _method.invokeMethod<String>('getFirmwareVersion');
   }
 
   Future<int?> getRadioPower() async {
-    if (!isAndroid) return null;
+    if (!supportsNativeRfid) return null;
     final value = await _method.invokeMethod<int>('getRadioPower');
     return value;
   }
 
   Future<int?> getMaxRadioPower() async {
-    if (!isAndroid) return null;
+    if (!supportsNativeRfid) return null;
     final value = await _method.invokeMethod<int>('getMaxRadioPower');
     return value;
   }
 
   Future<bool> setRadioPower(int decreaseDecibel) async {
-    if (!isAndroid) return false;
+    if (!supportsNativeRfid) return false;
     final ok = await _method.invokeMethod<bool>('setRadioPower', {
       'decreaseDecibel': decreaseDecibel,
     });

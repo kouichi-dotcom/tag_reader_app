@@ -42,7 +42,7 @@ class _RadioPowerScreenState extends State<RadioPowerScreen> {
     var maxDbm = _defaultMaxDbm;
 
     // Android 実機かつ接続済みなら、リーダーから現在値／最大値を取得して上書き
-    if (_reader.isAndroid) {
+    if (_reader.supportsNativeRfid) {
       try {
         final connected = await _reader.isConnected();
         if (connected) {
@@ -74,7 +74,7 @@ class _RadioPowerScreenState extends State<RadioPowerScreen> {
     }
     await RadioPowerStorage.saveDecreaseDecibel(clamped);
 
-    if (_reader.isAndroid) {
+    if (_reader.supportsNativeRfid) {
       try {
         final connected = await _reader.isConnected();
         if (!connected) return;

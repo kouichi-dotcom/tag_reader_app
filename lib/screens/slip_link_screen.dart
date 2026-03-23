@@ -55,7 +55,7 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
   @override
   void initState() {
     super.initState();
-    if (_reader.isAndroid) _listenLinkTrigger();
+    if (_reader.supportsNativeRfid) _listenLinkTrigger();
     final initial = widget.initialLinkedProducts;
     if (initial != null && initial.isNotEmpty) {
       _products.addAll(initial);
@@ -104,7 +104,7 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
   /// 実機読取開始（ボタン・トリガー両方から利用）。Android 以外では何もしない。
   Future<void> _startLinkingRead() async {
     if (_isLinkingReading) return;
-    if (!_reader.isAndroid) return;
+    if (!_reader.supportsNativeRfid) return;
 
     final okPerm = await _reader.requestBluetoothPermissions();
     final okConn = await _reader.isConnected();
@@ -349,11 +349,11 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
                           child: SizedBox(
                             width: double.infinity,
                             child: ElevatedButton(
-                              onPressed: _reader.isAndroid
+                              onPressed: _reader.supportsNativeRfid
                                   ? _toggleLinkingRead
                                   : _readTags,
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: _reader.isAndroid && _isLinkingReading
+                                backgroundColor: _reader.supportsNativeRfid && _isLinkingReading
                                     ? AppDesign.stopButton
                                     : AppDesign.primaryButton,
                                 foregroundColor: Colors.white,
@@ -362,7 +362,7 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
                                 elevation: 0,
                               ),
                               child: Text(
-                                _reader.isAndroid
+                                _reader.supportsNativeRfid
                                     ? (_isLinkingReading ? '読取停止' : '読取開始')
                                     : '商品をタグリーダーから読み取り',
                                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),

@@ -12,7 +12,6 @@ import '../services/storage_location_storage.dart';
 import '../services/tag_ledger_cache.dart';
 import '../theme/app_design.dart';
 import 'device_connection_screen.dart';
-import 'employee_code_screen.dart';
 import 'settings_screen.dart';
 import 'slip_load_screen.dart';
 import 'storage_location_screen.dart';
@@ -93,7 +92,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // Android: 実態が未接続なら表示を合わせる（アプリ再起動後など）
     if (name != null &&
         name.isNotEmpty &&
-        TagReaderService.instance.isAndroid &&
+        TagReaderService.instance.supportsNativeRfid &&
         !(await TagReaderService.instance.isConnected())) {
       await ConnectedDeviceStorage.clear();
       if (mounted) setState(() => _connectedDeviceName = null);
@@ -122,7 +121,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final storedDbm = (30 - storedDecrease).clamp(0, 30);
     var mode = _dbmToMode(storedDbm);
 
-    if (_reader.isAndroid) {
+    if (_reader.supportsNativeRfid) {
       try {
         final connected = await _reader.isConnected();
         if (connected) {
@@ -149,7 +148,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     int maxDbm = 30;
     bool connected = false;
-    if (_reader.isAndroid) {
+    if (_reader.supportsNativeRfid) {
       try {
         connected = await _reader.isConnected();
         if (connected) {
@@ -167,7 +166,7 @@ class _HomeScreenState extends State<HomeScreen> {
     await RadioPowerStorage.saveDecreaseDecibel(decreaseDecibel);
 
     String message;
-    if (_reader.isAndroid) {
+    if (_reader.supportsNativeRfid) {
       try {
         if (connected) {
           final ok = await _reader.setRadioPower(decreaseDecibel);
@@ -181,7 +180,7 @@ class _HomeScreenState extends State<HomeScreen> {
         message = '出力モードの反映に失敗しました: $e';
       }
     } else {
-      message = '出力モードを保存しました（Androidではありません）。';
+      message = '出力モードを保存しました（モバイル実機以外ではリーダーへ反映されません）。';
     }
 
     if (!mounted) return;
@@ -193,7 +192,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildOutputModePicker() {
     const tileRadius = 10.0;
-    const tilePadding = EdgeInsets.all(10);
+    const tilePadding = EdgeInsets.symmetric(horizontal: 10, vertical: 7);
     const tileBorderWidth = 1.0;
 
     Color tileBorderColor(_OutputMode m) => m == _selectedOutputMode
@@ -224,7 +223,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     Text(
                       m.mainLabel,
                       style: TextStyle(
-                        fontSize: 13,
+                        fontSize: 12,
                         fontWeight: FontWeight.w900,
                         color: Colors.black,
                         height: 1.1,
@@ -235,7 +234,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     Text(
                       m.subLabel,
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: 11,
                         fontWeight: FontWeight.w900,
                         color: Colors.black,
                         height: 1.1,
@@ -277,7 +276,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Container(
       width: 280,
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
         color: const Color(0xFFF5F5F5),
         borderRadius: BorderRadius.circular(12),
@@ -305,7 +304,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   backgroundColor: _outputTeal,
                   foregroundColor: Colors.white,
                   elevation: 0,
-                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
@@ -313,21 +312,21 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: const Text(
                   '適用',
                   style: TextStyle(
-                    fontSize: 13,
+                    fontSize: 12,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
           GridView.count(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             crossAxisCount: 2,
-            mainAxisSpacing: 8,
-            crossAxisSpacing: 8,
-            childAspectRatio: 2.4,
+            mainAxisSpacing: 6,
+            crossAxisSpacing: 6,
+            childAspectRatio: 2.8,
             children: [
               tile(_OutputMode.hand),
               tile(_OutputMode.near),
@@ -407,90 +406,104 @@ class _HomeScreenState extends State<HomeScreen> {
                   storageLocationName: _storageLocationName,
                 ),
                 Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        SizedBox(
-                          width: 280,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              _MenuButton(
-                                label: 'タグリーダー接続',
-                                backgroundColor: const Color(0xFF90CAF9),
-                                textColor: Colors.black,
-                                onPressed: () async {
-                                  await Navigator.of(context).push(
-                                    MaterialPageRoute<void>(
-                                      builder: (context) => const DeviceConnectionScreen(showBackButton: true),
+                  child: SafeArea(
+                    top: false,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        return SingleChildScrollView(
+                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              minHeight: constraints.maxHeight - 24,
+                            ),
+                            child: Center(
+                              child: SizedBox(
+                                width: 280,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    _MenuButton(
+                                      label: 'タグリーダー接続',
+                                      backgroundColor: const Color(0xFF90CAF9),
+                                      textColor: Colors.black,
+                                      onPressed: () async {
+                                        await Navigator.of(context).push(
+                                          MaterialPageRoute<void>(
+                                            builder: (context) =>
+                                                const DeviceConnectionScreen(showBackButton: true),
+                                          ),
+                                        );
+                                        _loadConnectedDevice();
+                                      },
                                     ),
-                                  );
-                                  _loadConnectedDevice();
-                                },
-                              ),
-                              const SizedBox(height: 16),
-                              _MenuButton(
-                                label: 'ICタグ読取・更新',
-                                backgroundColor: const Color(0xFFCDE990),
-                                textColor: Colors.black,
-                                onPressed: () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute<void>(
-                                      builder: (context) => const TagListScreen(showBackButton: true),
+                                    const SizedBox(height: 10),
+                                    _MenuButton(
+                                      label: 'ICタグ読取・更新',
+                                      backgroundColor: const Color(0xFFCDE990),
+                                      textColor: Colors.black,
+                                      onPressed: () {
+                                        Navigator.of(context).push(
+                                          MaterialPageRoute<void>(
+                                            builder: (context) =>
+                                                const TagListScreen(showBackButton: true),
+                                          ),
+                                        );
+                                      },
                                     ),
-                                  );
-                                },
-                              ),
-                              const SizedBox(height: 16),
-                              _MenuButton(
-                                label: '伝票読込',
-                                backgroundColor: const Color(0xFFFCE4EC),
-                                textColor: const Color(0xFFB71C1C),
-                                onPressed: () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute<void>(
-                                      builder: (context) => const SlipLoadScreen(showBackButton: true),
+                                    const SizedBox(height: 10),
+                                    _MenuButton(
+                                      label: '伝票読込',
+                                      backgroundColor: const Color(0xFFFCE4EC),
+                                      textColor: const Color(0xFFB71C1C),
+                                      onPressed: () {
+                                        Navigator.of(context).push(
+                                          MaterialPageRoute<void>(
+                                            builder: (context) =>
+                                                const SlipLoadScreen(showBackButton: true),
+                                          ),
+                                        );
+                                      },
                                     ),
-                                  );
-                                },
-                              ),
-                              const SizedBox(height: 16),
-                              _MenuButton(
-                                label: '保管場所選択',
-                                backgroundColor: const Color(0xFFFFCC80),
-                                textColor: Colors.black,
-                                onPressed: () async {
-                                  final updated = await Navigator.of(context).push<bool>(
-                                    MaterialPageRoute(
-                                      builder: (context) => const StorageLocationScreen(showBackButton: true),
+                                    const SizedBox(height: 10),
+                                    _MenuButton(
+                                      label: '保管場所選択',
+                                      backgroundColor: const Color(0xFFFFCC80),
+                                      textColor: Colors.black,
+                                      onPressed: () async {
+                                        final updated = await Navigator.of(context).push<bool>(
+                                          MaterialPageRoute(
+                                            builder: (context) =>
+                                                const StorageLocationScreen(showBackButton: true),
+                                          ),
+                                        );
+                                        if (updated == true) _loadStorageLocation();
+                                      },
                                     ),
-                                  );
-                                  if (updated == true) _loadStorageLocation();
-                                },
-                              ),
-                              const SizedBox(height: 16),
-                              _MenuButton(
-                                label: '設定',
-                                backgroundColor: const Color(0xFFB2DFDB),
-                                textColor: Colors.black,
-                                onPressed: () async {
-                                  await Navigator.of(context).push(
-                                    MaterialPageRoute<void>(
-                                      builder: (context) => const SettingsScreen(showBackButton: true),
+                                    const SizedBox(height: 10),
+                                    _MenuButton(
+                                      label: '設定',
+                                      backgroundColor: const Color(0xFFB2DFDB),
+                                      textColor: Colors.black,
+                                      onPressed: () async {
+                                        await Navigator.of(context).push(
+                                          MaterialPageRoute<void>(
+                                            builder: (context) =>
+                                                const SettingsScreen(showBackButton: true),
+                                          ),
+                                        );
+                                        if (!mounted) return;
+                                        await _loadOutputMode();
+                                      },
                                     ),
-                                  );
-                                  if (!mounted) return;
-                                  await _loadOutputMode();
-                                },
+                                    const SizedBox(height: 10),
+                                    _buildOutputModePicker(),
+                                  ],
+                                ),
                               ),
-                              const SizedBox(height: 16),
-                              _buildOutputModePicker(),
-                            ],
+                            ),
                           ),
-                        ),
-                      ],
+                        );
+                      },
                     ),
                   ),
                 ),
@@ -614,11 +627,11 @@ class _MenuButton extends StatelessWidget {
             onTap: enabled ? onPressed : null,
             borderRadius: BorderRadius.circular(12),
             child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
               child: Text(
                 label,
                 style: TextStyle(
-                  fontSize: 17,
+                    fontSize: 16,
                   fontWeight: FontWeight.w600,
                   color: textColor ?? Colors.white,
                 ),

@@ -70,7 +70,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
     final name = await ConnectedDeviceStorage.getName();
     if (id == null || name == null || !mounted) return;
     // Android: 実態の接続状態を確認。アプリ再起動後は接続が切れているので未接続に合わせる
-    if (_reader.isAndroid) {
+    if (_reader.supportsNativeRfid) {
       final actuallyConnected = await _reader.isConnected();
       if (!actuallyConnected && mounted) {
         setState(() {
@@ -87,7 +87,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
   Future<void> _startScan() async {
     setState(() => _isScanning = true);
     try {
-      if (_reader.isAndroid) {
+      if (_reader.supportsNativeRfid) {
         final ok = await _reader.requestBluetoothPermissions();
         if (!ok && mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -140,12 +140,12 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
         setState(() => _isScanning = false);
       }
     } finally {
-      if (mounted && !_reader.isAndroid) setState(() => _isScanning = false);
+      if (mounted && !_reader.supportsNativeRfid) setState(() => _isScanning = false);
     }
   }
 
   Future<void> _stopScan() async {
-    if (_reader.isAndroid) {
+    if (_reader.supportsNativeRfid) {
       await _reader.stopBleScan();
       _bleScanSub?.cancel();
       _bleScanSub = null;
@@ -155,7 +155,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
 
   Future<void> _connect(MockBleDevice device) async {
     // Windows等はモック
-    if (!_reader.isAndroid) {
+    if (!_reader.supportsNativeRfid) {
       setState(() => _connectedDevice = device);
       ConnectedDeviceStorage.save(device.id, device.name);
       return;
@@ -204,7 +204,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
 
   Future<void> _disconnect() async {
     try {
-      if (_reader.isAndroid) {
+      if (_reader.supportsNativeRfid) {
         await _reader.disconnect();
       }
     } finally {
@@ -391,7 +391,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
                           child: Text(
                             _isScanning
                                 ? 'スキャン中...'
-                                : (_reader.isAndroid
+                                : (_reader.supportsNativeRfid
                                     ? '「スキャン」でペアリング済みデバイスと周辺のリーダーを表示'
                                     : '「スキャン」でデバイスを検索'),
                             style: const TextStyle(fontSize: 14, color: Color(0xFF666666)),

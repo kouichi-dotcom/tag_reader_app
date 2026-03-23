@@ -60,7 +60,7 @@ class _TagInfoScreenState extends State<TagInfoScreen> {
       _streamError = null;
     });
 
-    if (_reader.isAndroid) {
+    if (_reader.supportsNativeRfid) {
       final okPerm = await _reader.requestBluetoothPermissions();
       final okConn = await _reader.isConnected();
       if (!mounted) return;

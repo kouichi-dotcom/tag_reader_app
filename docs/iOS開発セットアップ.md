@@ -47,25 +47,69 @@ git commit -m "Add TSS iOS SDK 6.2.0 vendor files"
 
 バイナリが大きい場合は **Git LFS** の利用を検討してください。
 
-## 3. Xcode での SDK リンク（実装時）
+## 3. Xcode での SDK リンク（静的ライブラリ）
 
-SDK の種類（`.xcframework` / `.framework` 等）に応じて、**Runner ターゲット**へ以下を実施します（詳細はベンダー同梱の手順書・サンプルを参照）。
+**Runner** ターゲットに、ベンダー同梱の **`libTSS_SDK.a`** をリンクします。`project.pbxproj` では次を満たすよう設定済みです（変更時は Xcode の **Build Settings** で確認してください）。
 
-- Framework の埋め込み（Embed）
-- 必要な **Build Settings** / **Bridging Header**
-- **Info.plist**（Bluetooth 等の利用目的文言・権限）
+| 設定 | 値（例） |
+|------|----------|
+| **Link Binary With Libraries** | `third_party/SDK_for_iOS_6.2.0/Library/DOTR_IOS/libTSS_SDK.a` |
+| **LIBRARY_SEARCH_PATHS** | `$(PROJECT_DIR)/third_party/SDK_for_iOS_6.2.0/Library/DOTR_IOS` |
+| **HEADER_SEARCH_PATHS** | 上記 SDK ルートに加え、`.../Library/DOTR_IOS/Headers`（`#import "TSS_SDK.h"` 用） |
+| **OTHER_LDFLAGS** | `$(inherited)` と **`-ObjC`**（カテゴリ等の未解決シンボル対策） |
 
-## 4. Flutter との連携
+サンプルは `third_party/.../Source Code/DOTRSamples/InventoryTag/` を参照。
 
-Android の `MainActivity.kt` と同様、**Method Channel** 等で Dart ↔ ネイティブを接続します。iOS 側は `AppDelegate.swift` または別クラスに実装を追加します。
+- **Bridging Header** … `Runner-Bridging-Header.h`（必要に応じて）
+- **Info.plist** … Bluetooth 等の利用目的文言・権限（`NSBluetoothAlwaysUsageDescription` 等）
 
-## 5. ビルド例
+## 4. Flutter との連携（実装済み）
+
+Android の `MainActivity.kt` と同じ名前で、次を登録しています。
+
+| 名前 | 役割 |
+|------|------|
+| `tss_rfid/method` | `MethodChannel`（接続・在庫・電波強度など） |
+| `tss_rfid/events` | `EventChannel`（`inventory_epc`、`ble_device_found` 等） |
+
+- `ios/Runner/TssRfidPlugin.swift` … チャネル登録・Flutter からの呼び出し
+- `ios/Runner/TssRfidNativeBridge.m` + **`TssRfidSdkSession.m`** … `TSS_SDK` / `ReaderDelegate` へのブリッジ（**静的リンク済み**）
+
+### Android との API 差分（在庫レポート）
+
+Android の `setInventoryReportMode` は複数フラグがありますが、**iOS の `TSS_SDK` は引数が異なります**。実装では Dart 側の `dateTime` / `radioPower` を iOS の **`setInventoryReportMode:reportTime:reportRSSI:`** にマップしています。**`channel` / `temp` / `phase`** は iOS API に無いため、無視（ベストエフォート）です。
+
+### BLE スキャンは TSS_SDK に統一
+
+別の `CBCentralManager` で見つけた端末と、SDK の `connect:` が必ず整合するとは限らないため、**`ble_device_found` は `[TSS_SDK scan]` / `didDiscoverDevice:` 経路**に統一しています（`startBleScan` → `TssRfidSdkSession`）。接続は **`retrievePeripheralsWithIdentifiers:`** で UUID から `CBPeripheral` を復元してから `connect:` します。先にスキャンで端末を検出してから接続してください。
+
+**接続の非同期**: `connect:` は即時 `BOOL` ですが実接続完了はデリゲートです。ブリッジ側で `onConnected` / `onConnectFail` を短時間待ってから FW 取得等に進みます（Flutter が `connect` 直後に `getFirmwareVersion` を呼んでも破綻しないよう配慮）。
+
+アドレスは iOS では **UUID 文字列**です。
+
+## 5. トラブルシュート
+
+- **リンクエラー（Undefined symbols / ObjC カテゴリ）** … `OTHER_LDFLAGS` に `-ObjC` が入っているか、`LIBRARY_SEARCH_PATHS` に `libTSS_SDK.a` のディレクトリがあるか確認してください。
+- **Bluetooth を許可してもスキャンが始まらない** … `Info.plist` の `NSBluetoothAlwaysUsageDescription` を確認し、設定アプリで Bluetooth をオンにしてください。
+- **接続できない・UUID が見つからない** … 一度 **SDK のスキャン**で端末を検出してから接続してください。別経路の `CBPeripheral` だけでは不整合になる場合があります。
+- **実機から PC 上の TagReaderApi を叩く** … `localhost` は使えません。PC の LAN IP と `http://0.0.0.0:5262` 待受など（`README` / `api_config` のコメント参照）。
+
+## 6. ビルド例
 
 ```bash
-flutter build ios
+cd ios && pod install && cd ..
+flutter build ios --no-codesign   # CI や署名なし確認用
+flutter build ios                 # 実機配布・署名あり
 ```
 
 実機では Xcode で署名チームを選び、`Runner` を実機向けに Run します。
+
+### 実機での確認手順（目安）
+
+1. アプリ起動 → BLE スキャンでリーダーが `ble_device_found` に出ること
+2. 接続 → FW バージョン取得
+3. 在庫開始 → `inventory_epc` が流れること
+4. 電波強度の取得・変更（リーダー仕様に依存）
 
 ## ライセンス・取り扱い
 

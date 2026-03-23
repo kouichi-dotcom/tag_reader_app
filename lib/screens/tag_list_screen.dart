@@ -139,7 +139,7 @@ class _TagListScreenState extends State<TagListScreen> {
   /// 読取開始（ボタン・トリガー両方から利用）。Android 以外では何もしない。
   Future<void> _startInventoryIfReady() async {
     if (_isReading) return;
-    if (!_reader.isAndroid) return;
+    if (!_reader.supportsNativeRfid) return;
 
     setState(() => _isReading = true);
 
@@ -300,7 +300,7 @@ class _TagListScreenState extends State<TagListScreen> {
   @override
   void initState() {
     super.initState();
-    if (_reader.isAndroid) _listenTrigger();
+    if (_reader.supportsNativeRfid) _listenTrigger();
   }
 
   @override
@@ -512,14 +512,14 @@ class _TagListScreenState extends State<TagListScreen> {
                         _isReading ? '読取中…' : '停止中',
                         style: const TextStyle(fontSize: 13, color: Color(0xFF666666)),
                       ),
-                      if (_reader.isAndroid) ...[
+                      if (_reader.supportsNativeRfid) ...[
                         const SizedBox(height: 4),
                         const Text(
                           'トリガー: 1回押しで読取ON、もう1回押しでOFF',
                           style: TextStyle(fontSize: 12, color: Color(0xFF888888)),
                         ),
                       ],
-                      if (!_reader.isAndroid) ...[
+                      if (!_reader.supportsNativeRfid) ...[
                         const SizedBox(height: 12),
                         OutlinedButton.icon(
                           onPressed: _randomLoading ? null : _addRandomRead,
@@ -594,7 +594,7 @@ class _TagListScreenState extends State<TagListScreen> {
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  _reader.isAndroid
+                                  _reader.supportsNativeRfid
                                       ? '読取開始ボタンまたはリーダーのトリガー（押している間）で読み取れます'
                                       : '「テスト: ランダムに1件読み取り」でAPIから取得',
                                   style: TextStyle(fontSize: 12, color: Colors.grey.shade600),

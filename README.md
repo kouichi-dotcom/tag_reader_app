@@ -8,7 +8,7 @@
 - **ICタグ読取・更新** … タグ一覧表示・ステータス変更・[ICタグ台帳]／[tag_table4] への送信（完成形）
 - **伝票一覧** … 受付台帳API 連携
 - **担当者コード入力** … 担当者コード・氏名の保存
-- **電波強度設定（Android実機）** … 接続中タグリーダーのRF出力(dBm)を変更
+- **電波強度設定（Android / iOS 実機・TSS SDK 接続時）** … 接続中タグリーダーのRF出力(dBm)を変更
 
 ## ドキュメント
 
@@ -70,8 +70,10 @@ cd C:\dev\tag_reader_app
 .\tools\setup_ios_sdk.ps1
 ```
 
-SDK をリポジトリに含める場合は、配置後に `git add ios/third_party/SDK_for_iOS_6.2.0` でコミットしてください（容量が大きい場合は Git LFS を検討）。  
-**Xcode でのフレームワークリンク・Flutter ネイティブ連携**は Android 同様、別途実装が必要です。
+SDK をリポジトリに含める場合は、配置後に `git add ios/third_party/SDK_for_iOS_6.2.0` でコミットしてください（容量が大きい場合は Git LFS を検討）。
+
+アプリ側では **Method Channel `tss_rfid/method` / EventChannel `tss_rfid/events`**（Android の `MainActivity.kt` と同名）を `ios/Runner/TssRfidPlugin.swift` 等で登録済みです。  
+**BLE スキャン**（`BLE SPP` 等の名称フィルタ）は CoreBluetooth で動作します。**接続・在庫読取・電波強度**は TSS iOS SDK を `ios/Runner/TssRfidNativeBridge.m` にリンクし、`HAS_TSS_IOS_SDK` を実装する必要があります（詳細は [iOS開発セットアップ](docs/iOS開発セットアップ.md)）。
 
 ## Getting Started（Flutter）
 

@@ -8,5 +8,5 @@ String getApiBaseUrl() {
   return 'http://localhost:5262';
 }
 
-/// Android では API を使わず JSON のみ。Windows などでは API を使用する。
-bool get useApi => !Platform.isAndroid;
+/// Android / iOS 実機では API を使わず台帳キャッシュ優先（Windows などでは API を使用）。
+bool get useApi => !Platform.isAndroid && !Platform.isIOS;
