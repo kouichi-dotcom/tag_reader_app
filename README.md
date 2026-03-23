@@ -14,6 +14,7 @@
 
 - [ICタグ読取・更新 機能仕様書](docs/ICタグ読取・更新.md) … 画面・操作・DB連携・テスト機能の最新仕様
 - [API設計](docs/API設計.md) … 商品取得・ランダム取得・商品更新API の仕様
+- [iOS開発セットアップ](docs/iOS開発セットアップ.md) … Mac/Xcode・CocoaPods・TSS iOS SDK 配置・ビルド手順
 
 ## 技術スタック
 
@@ -57,6 +58,20 @@ cd C:\dev\tag_reader_app
 - メイン → **「タグリーダー接続」** → **「スキャン」**（ペアリング済み一覧） → 対象デバイスを **「接続」**
 - メイン → **「ICタグ読取・更新」** → **「読取開始」**（EPCが追加されること）
 - メイン → **「タグ情報表示」** → **「読取開始」**（RSSI/CH/TEMP/PH 等が表示されること）
+
+## iOS（iPhone 向けビルド・TSS SDK 配置）
+
+- **Mac + Xcode** が必要です。詳細は [iOS開発セットアップ](docs/iOS開発セットアップ.md) を参照。
+- **CocoaPods**: `cd ios && pod install`（`ios/Podfile` あり）
+- **TSS iOS SDK（SDK_for_iOS_6.2.0）** は `ios/third_party/SDK_for_iOS_6.2.0/` に配置します。共有フォルダからコピーする場合:
+
+```powershell
+cd C:\dev\tag_reader_app
+.\tools\setup_ios_sdk.ps1
+```
+
+SDK をリポジトリに含める場合は、配置後に `git add ios/third_party/SDK_for_iOS_6.2.0` でコミットしてください（容量が大きい場合は Git LFS を検討）。  
+**Xcode でのフレームワークリンク・Flutter ネイティブ連携**は Android 同様、別途実装が必要です。
 
 ## Getting Started（Flutter）
 
