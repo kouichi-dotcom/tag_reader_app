@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../api/api_client.dart';
 import '../config/api_config.dart';
@@ -19,12 +20,25 @@ class EmployeeCodeScreen extends StatefulWidget {
 
 class _EmployeeCodeScreenState extends State<EmployeeCodeScreen> {
   final _controller = TextEditingController();
+  final _focusNode = FocusNode();
   final _formKey = GlobalKey<FormState>();
   String? _errorMessage;
   bool _saving = false;
 
   @override
+  void initState() {
+    super.initState();
+    // 画面表示直後から入力・数字キーボード表示（タップ不要）
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _focusNode.requestFocus();
+      }
+    });
+  }
+
+  @override
   void dispose() {
+    _focusNode.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -127,6 +141,11 @@ class _EmployeeCodeScreenState extends State<EmployeeCodeScreen> {
                           const SizedBox(height: 24),
                           TextFormField(
                             controller: _controller,
+                            focusNode: _focusNode,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
                             decoration: const InputDecoration(
                               labelText: '担当者コード（必須）',
                               hintText: '例: 1 または 001',

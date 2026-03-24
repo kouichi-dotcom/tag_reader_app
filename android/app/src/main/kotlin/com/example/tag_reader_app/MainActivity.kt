@@ -6,6 +6,7 @@ import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.ActivityCompat
@@ -21,6 +22,11 @@ import jp.co.tss21.uhfrfid.dotr_android.OnDotrEventListener
 import jp.co.tss21.uhfrfid.tssrfid.TssRfidUtill
 
 class MainActivity : FlutterActivity(), OnDotrEventListener {
+    companion object {
+        private const val PREFS_BRIDGE = "tss_rfid_bridge"
+        private const val KEY_HIDDEN_BONDED = "hidden_bonded_addresses"
+    }
+
     private val methodChannelName = "tss_rfid/method"
     private val eventChannelName = "tss_rfid/events"
 
@@ -75,6 +81,7 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
             when (call.method) {
                 "requestBluetoothPermissions" -> handleRequestBluetoothPermissions(result)
                 "getBondedDevices" -> handleGetBondedDevices(result)
+                "removeBondedDevice" -> handleRemoveBondedDevice(call, result)
                 "startBleScan" -> handleStartBleScan(result)
                 "stopBleScan" -> handleStopBleScan(result)
                 "connect" -> handleConnect(call, result)
@@ -181,6 +188,18 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
         return true
     }
 
+    private fun hiddenBondedAddresses(): MutableSet<String> {
+        val raw = getSharedPreferences(PREFS_BRIDGE, Context.MODE_PRIVATE)
+            .getStringSet(KEY_HIDDEN_BONDED, emptySet()) ?: emptySet()
+        return raw.map { it.uppercase() }.toMutableSet()
+    }
+
+    private fun saveHiddenBonded(set: Set<String>) {
+        getSharedPreferences(PREFS_BRIDGE, Context.MODE_PRIVATE).edit()
+            .putStringSet(KEY_HIDDEN_BONDED, set)
+            .apply()
+    }
+
     private fun handleGetBondedDevices(result: MethodChannel.Result) {
         val adapter = BluetoothAdapter.getDefaultAdapter()
         if (adapter == null) {
@@ -194,7 +213,12 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
             return
         }
 
+        val hidden = hiddenBondedAddresses()
         val devices = adapter.bondedDevices
+            .filter { d ->
+                val addr = d.address?.uppercase() ?: ""
+                addr !in hidden
+            }
             .mapNotNull { d ->
                 val name = d.name ?: ""
                 val addr = d.address ?: ""
@@ -205,6 +229,21 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
             .sortedBy { (it["name"] as String) }
 
         result.success(devices)
+    }
+
+    private fun handleRemoveBondedDevice(call: MethodCall, result: MethodChannel.Result) {
+        val addr = call.argument<String>("address")?.trim()?.uppercase() ?: run {
+            result.success(false)
+            return
+        }
+        if (addr.isEmpty()) {
+            result.success(false)
+            return
+        }
+        val hidden = hiddenBondedAddresses()
+        hidden.add(addr)
+        saveHiddenBonded(hidden)
+        result.success(true)
     }
 
     private fun handleStartBleScan(result: MethodChannel.Result) {

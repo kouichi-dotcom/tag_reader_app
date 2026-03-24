@@ -71,6 +71,15 @@ class TagReaderService {
     return devices;
   }
 
+  /// 一覧から削除。iOS はアプリ保存の接続候補を削除。Android は OS ペアリングは残しアプリ上のみ非表示。
+  Future<bool> removeBondedDeviceFromList({required String address}) async {
+    if (!supportsNativeRfid) return false;
+    final ok = await _method.invokeMethod<bool>('removeBondedDevice', {
+      'address': address,
+    });
+    return ok ?? false;
+  }
+
   Future<void> startBleScan() async {
     if (!supportsNativeRfid) return;
     await _method.invokeMethod<void>('startBleScan');

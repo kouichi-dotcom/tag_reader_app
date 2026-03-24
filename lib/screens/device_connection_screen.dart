@@ -1,11 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../mocks/mock_data.dart';
 import '../services/connected_device_storage.dart';
 import '../services/tag_reader_service.dart';
 import '../theme/app_design.dart';
+import '../utils/connect_error_messages.dart';
 
 /// 画面 1: タグリーダー接続（design/screen1-connection-wireframe.html 準拠）
 /// スキャン・デバイス一覧・接続・切断
@@ -35,6 +37,10 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
   void initState() {
     super.initState();
     _loadSavedConnection();
+    // ペアリング済み一覧はスキャン不要で表示（ネイティブは getBondedDevices、モックは固定リスト）
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadBondedDevices();
+    });
     _sub = _reader.events.listen((e) async {
       if (!mounted) return;
       switch (e['type']) {
@@ -63,6 +69,32 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
     _sub?.cancel();
     _bleScanSub?.cancel();
     super.dispose();
+  }
+
+  /// ペアリング済み（登録済み）デバイス一覧のみ取得。BLE スキャンは開始しない。
+  Future<void> _loadBondedDevices() async {
+    if (!mounted) return;
+    try {
+      if (_reader.supportsNativeRfid) {
+        final ok = await _reader.requestBluetoothPermissions();
+        if (!ok || !mounted) return;
+        final bonded = await _reader.getBondedDevices();
+        if (!mounted) return;
+        setState(() {
+          _bondedDevices = bonded
+              .map((d) => MockBleDevice(id: d.address, name: d.name))
+              .toList();
+        });
+      } else {
+        setState(() {
+          _bondedDevices = List.from(mockBleDevices);
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        debugPrint('getBondedDevices failed: $e');
+      }
+    }
   }
 
   Future<void> _loadSavedConnection() async {
@@ -176,7 +208,10 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
       if (!ok) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('接続に失敗しました（端末のBluetoothペアリングを確認してください）。')),
+            SnackBar(
+              content: Text(connectFailureMessageForUser(null)),
+              duration: const Duration(seconds: 8),
+            ),
           );
         }
         return;
@@ -189,6 +224,19 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
         _firmwareVersion = (fw != null && fw.isNotEmpty) ? fw : _firmwareVersion;
       });
       ConnectedDeviceStorage.save(device.id, device.name);
+    } on PlatformException catch (e) {
+      if (mounted) {
+        setState(() {
+          _isConnecting = false;
+          _connectingDevice = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(connectFailureMessageForUser(e)),
+            duration: const Duration(seconds: 8),
+          ),
+        );
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -196,7 +244,10 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
           _connectingDevice = null;
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('接続失敗: $e')),
+          SnackBar(
+            content: Text(connectFailureMessageForUser(e)),
+            duration: const Duration(seconds: 8),
+          ),
         );
       }
     }
@@ -229,6 +280,67 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
           color: Color(0xFF666666),
         ),
       ),
+    );
+  }
+
+  Future<bool> _confirmRemoveBondedDevice(MockBleDevice device) async {
+    final go = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('一覧から削除しますか？'),
+        content: Text(
+          _reader.supportsNativeRfid
+              ? 'このアプリの一覧から削除します。\n'
+                  '（OS の Bluetooth 設定でペアリング解除する操作ではありません。Android は端末のペアリングは残り、アプリ上だけ非表示になります。）'
+              : '一覧からこのデバイスを削除します。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('キャンセル'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('削除'),
+          ),
+        ],
+      ),
+    );
+    return go == true;
+  }
+
+  Future<void> _removeBondedDevice(MockBleDevice device) async {
+    if (_connectedDevice?.id == device.id) {
+      await _disconnect();
+    }
+    if (_reader.supportsNativeRfid) {
+      await _reader.removeBondedDeviceFromList(address: device.id);
+      if (mounted) await _loadBondedDevices();
+    } else {
+      setState(() {
+        _bondedDevices = _bondedDevices.where((d) => d.id != device.id).toList();
+      });
+    }
+  }
+
+  Widget _bondedDeviceCard(MockBleDevice device) {
+    return Dismissible(
+      key: ValueKey<String>('bonded_${device.id}'),
+      direction: DismissDirection.endToStart,
+      confirmDismiss: (direction) async {
+        if (!await _confirmRemoveBondedDevice(device)) return false;
+        await _removeBondedDevice(device);
+        return true;
+      },
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        color: Colors.red,
+        child: const Icon(Icons.delete_outline, color: Colors.white, size: 28),
+      ),
+      child: _deviceCard(device),
     );
   }
 
@@ -361,7 +473,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                // スキャンボタン
+                // 周辺スキャン（ペアリング済みは _loadBondedDevices で先に表示）
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: SizedBox(
@@ -373,11 +485,16 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
                               _startScan();
                             },
                       icon: Icon(_isScanning ? Icons.stop : Icons.search),
-                      label: Text(_isScanning ? 'スキャン停止' : 'スキャン'),
+                      label: Text(
+                        _isScanning ? 'スキャン停止' : '新しいタグリーダーとペアリング設定',
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                      ),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppDesign.primaryButton,
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
+                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         elevation: 0,
                       ),
@@ -388,13 +505,17 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
                 Expanded(
                   child: _bondedDevices.isEmpty && _scannedBleDevices.isEmpty
                       ? Center(
-                          child: Text(
-                            _isScanning
-                                ? 'スキャン中...'
-                                : (_reader.supportsNativeRfid
-                                    ? '「スキャン」でペアリング済みデバイスと周辺のリーダーを表示'
-                                    : '「スキャン」でデバイスを検索'),
-                            style: const TextStyle(fontSize: 14, color: Color(0xFF666666)),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 24),
+                            child: Text(
+                              _isScanning
+                                  ? 'スキャン中...'
+                                  : (_reader.supportsNativeRfid
+                                      ? '上のボタンで周辺のリーダーを検索できます（ペアリング済みは上に表示されます）'
+                                      : '上のボタンでデバイスを検索'),
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(fontSize: 14, color: Color(0xFF666666)),
+                            ),
                           ),
                         )
                       : ListView(
@@ -402,7 +523,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
                           children: [
                             if (_bondedDevices.isNotEmpty) ...[
                               _sectionHeader('ペアリング済みデバイス'),
-                              ..._bondedDevices.map((d) => _deviceCard(d)),
+                              ..._bondedDevices.map((d) => _bondedDeviceCard(d)),
                             ],
                             if (_scannedBleDevices.isNotEmpty) ...[
                               _sectionHeader('検出されたデバイス'),

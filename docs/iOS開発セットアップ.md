@@ -92,6 +92,8 @@ Android の `setInventoryReportMode` は複数フラグがありますが、**iO
 - **リンクエラー（Undefined symbols / ObjC カテゴリ）** … `OTHER_LDFLAGS` に `-ObjC` が入っているか、`LIBRARY_SEARCH_PATHS` に `libTSS_SDK.a` のディレクトリがあるか確認してください。
 - **Bluetooth を許可してもスキャンが始まらない** … `Info.plist` の `NSBluetoothAlwaysUsageDescription` を確認し、設定アプリで Bluetooth をオンにしてください。
 - **接続できない・UUID が見つからない** … 一度 **SDK のスキャン**で端末を検出してから接続してください。別経路の `CBPeripheral` だけでは不整合になる場合があります。
+- **SR-7 だけ不安定・R-5000 は安定** … iOS の `retrievePeripheralsWithIdentifiers` だけだと `CBPeripheral` が古い／名前が空の状態になり、`initReader:` に必要な端末名とズレて `onConnectFail` になりやすいです。アプリ側では **スキャンで検出した端末をキャッシュ**し、**接続前に既存セッションがあれば切断して短い待機**するよう調整しています。それでも失敗する場合は、リーダー電源・距離、**他スマホ／PC との同時接続**、直前の切断直後の再接続を避けて再試行してください。
+- **ペアリング済みなのに SR-7 だけ「先にスキャン」が必要だった** … 「ペアリング済み」表示はアプリ内保存＋一部 `retrieve` 由来ですが、**CoreBluetooth は機種によって `retrieve` が空のまま**になり、**実際の `connect:` には周辺スキャンで一度検出した `CBPeripheral` が要る**ことがあります。R-5000 は OS が既に周辺として認識しており `retrieve` が効きやすい一方、SR-7 はそうならない場合があります。接続処理内で **`retrieve` が空なら短時間の自動スキャン**して同じ UUID を捕捉してから接続するよう補っています。
 - **実機から PC 上の TagReaderApi を叩く** … `localhost` は使えません。PC の LAN IP と `http://0.0.0.0:5262` 待受など（`README` / `api_config` のコメント参照）。
 
 ## 6. ビルド例

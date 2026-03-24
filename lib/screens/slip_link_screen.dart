@@ -9,6 +9,8 @@ import '../models/inventory_epc.dart';
 import '../models/product_by_epc.dart';
 import '../models/reception_slip.dart';
 import '../services/employee_cache.dart';
+import '../services/hardware_trigger_handler.dart';
+import '../services/hardware_trigger_mode_storage.dart';
 import '../services/product_cache.dart';
 import '../services/tag_ledger_cache.dart';
 import '../services/tag_reader_service.dart';
@@ -42,11 +44,15 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
   bool _isLinkingReading = false;
   final _reader = TagReaderService.instance;
   StreamSubscription<InventoryEpc>? _linkInvSub;
-  StreamSubscription<bool>? _linkTriggerSub;
+  HardwareTriggerHandler? _hwTriggerHandler;
+  HardwareTriggerMode _hwTriggerMode = HardwareTriggerMode.toggle;
+  int _hwTimedSeconds = HardwareTriggerModeStorage.timedSecondsDefault;
 
   @override
   void dispose() {
-    _linkTriggerSub?.cancel();
+    if (_hwTriggerHandler != null) {
+      unawaited(_hwTriggerHandler!.cancelSubscriptionOnly());
+    }
     _linkInvSub?.cancel();
     _reader.stopInventory();
     super.dispose();
@@ -55,7 +61,16 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
   @override
   void initState() {
     super.initState();
-    if (_reader.supportsNativeRfid) _listenLinkTrigger();
+    unawaited(_loadHardwareTriggerHints());
+    if (_reader.supportsNativeRfid) {
+      _hwTriggerHandler = HardwareTriggerHandler(
+        onStart: _startLinkingRead,
+        onStop: _stopLinkingRead,
+        isReading: () => _isLinkingReading,
+        mounted: () => mounted,
+      );
+      unawaited(_hwTriggerHandler!.attach(_reader));
+    }
     final initial = widget.initialLinkedProducts;
     if (initial != null && initial.isNotEmpty) {
       _products.addAll(initial);
@@ -95,6 +110,7 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
 
   /// 実機読取停止（ボタン・トリガー両方から利用）
   Future<void> _stopLinkingRead() async {
+    _hwTriggerHandler?.notifyStoppedByAppButton();
     await _linkInvSub?.cancel();
     _linkInvSub = null;
     await _reader.stopInventory();
@@ -195,16 +211,15 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
     }
   }
 
-  void _listenLinkTrigger() {
-    _linkTriggerSub?.cancel();
-    _linkTriggerSub = _reader.triggerStream.listen((pressed) async {
-      if (!mounted) return;
-      if (pressed) {
-        if (!_isLinkingReading) await _startLinkingRead();
-      } else {
-        if (_isLinkingReading) await _stopLinkingRead();
-      }
-    });
+  Future<void> _loadHardwareTriggerHints() async {
+    final m = await HardwareTriggerModeStorage.getMode();
+    final s = await HardwareTriggerModeStorage.getTimedSeconds();
+    if (mounted) {
+      setState(() {
+        _hwTriggerMode = m;
+        _hwTimedSeconds = s;
+      });
+    }
   }
 
   void _toggleProduct(String id) {
@@ -370,6 +385,19 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
                             ),
                           ),
                         ),
+                        if (_reader.supportsNativeRfid) ...[
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                            child: Text(
+                              HardwareTriggerModeStorage.describeForTagList(
+                                _hwTriggerMode,
+                                _hwTimedSeconds,
+                              ),
+                              style: const TextStyle(fontSize: 12, color: Color(0xFF888888)),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ],
                         // 商品一覧ヘッダー
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),

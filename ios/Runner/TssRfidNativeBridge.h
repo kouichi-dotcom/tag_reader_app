@@ -47,6 +47,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (void)clearKnownDevices;
 
+/// UserDefaults から 1 台削除（ペアリング済み一覧のスワイプ削除）
++ (BOOL)removeKnownDeviceWithAddress:(NSString *)address;
+
 @end
 
 NS_ASSUME_NONNULL_END

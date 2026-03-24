@@ -103,4 +103,8 @@ static void (^sEventCallback)(NSDictionary *event);
   [[NSUserDefaults standardUserDefaults] removeObjectForKey:kKnownDevicesKey];
 }
 
++ (BOOL)removeKnownDeviceWithAddress:(NSString *)address {
+  return [[TssRfidSdkSession shared] removeKnownDeviceWithAddress:address];
+}
+
 @end

@@ -40,6 +40,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// UserDefaults + retrieveConnectedPeripherals をマージした bonded 風一覧
 - (NSArray<NSDictionary *> *)mergedKnownBondedStyleDevices;
 
+/// UserDefaults に保存した 1 台分を削除（一覧のスワイプ削除用）
+- (BOOL)removeKnownDeviceWithAddress:(NSString *)address;
+
 @end
 
 NS_ASSUME_NONNULL_END

@@ -49,6 +49,8 @@ final class TssRfidPlugin: NSObject, FlutterStreamHandler {
       handleRequestBluetoothPermissions(result: result)
     case "getBondedDevices":
       handleGetBondedDevices(result: result)
+    case "removeBondedDevice":
+      handleRemoveBondedDevice(call: call, result: result)
     case "startBleScan":
       handleStartBleScan(result: result)
     case "stopBleScan":
@@ -87,6 +89,16 @@ final class TssRfidPlugin: NSObject, FlutterStreamHandler {
   private func handleGetBondedDevices(result: @escaping FlutterResult) {
     let list = TssRfidNativeBridge.knownBondedStyleDevices() as? [[String: Any]] ?? []
     result(list)
+  }
+
+  private func handleRemoveBondedDevice(call: FlutterMethodCall, result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any]
+    let address = (args?["address"] as? String) ?? ""
+    if address.isEmpty {
+      result(false)
+      return
+    }
+    result(TssRfidNativeBridge.removeKnownDevice(withAddress: address))
   }
 
   private func handleStartBleScan(result: @escaping FlutterResult) {

@@ -1,8 +1,10 @@
 #import "TssRfidSdkSession.h"
 #import "TSS_SDK.h"
 #import "DOTR_Util.h"
+#import <CoreBluetooth/CoreBluetooth.h>
 
 static NSString *const kKnownDevicesKey = @"tss_rfid_ios_known_devices";
+static NSString *const kHiddenAddressesKey = @"tss_rfid_ios_hidden_reader_addresses";
 // NOTE:
 // EPC のクールダウン（重複通知抑制）は一旦無効化中。
 // 復活する場合は、下記定数と onInventoryEPC 内の該当ブロックを戻す。
@@ -43,6 +45,12 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
 @property (nonatomic, strong, nullable) dispatch_semaphore_t pendingConnectSem;
 @property (nonatomic, assign) BOOL connectWaitOutcome;
 @property (nonatomic, strong, nullable) NSError *pendingConnectError;
+/// 同時に複数 connect が走ると semaphore / delegate が競合するため直列化する
+@property (nonatomic, strong) NSLock *connectLock;
+/// retrieve が空のとき、短時間スキャンで該当 UUID の周辺端末を待つ（SR-7 等）
+@property (nonatomic, copy, nullable) NSString *pendingDiscoverUuid;
+@property (nonatomic, strong, nullable) dispatch_semaphore_t pendingDiscoverSem;
+@property (nonatomic, strong, nullable) CBPeripheral *pendingDiscoveredPeripheral;
 @end
 
 @implementation TssRfidSdkSession
@@ -63,6 +71,7 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
     [_reader setDelegate:self];
     _epcLastNotifiedAtMs = [NSMutableDictionary dictionary];
     _discoveredPeripheralsByUuid = [NSMutableDictionary dictionary];
+    _connectLock = [[NSLock alloc] init];
   }
   return self;
 }
@@ -83,7 +92,8 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
 
 - (void)startBleScan {
   dispatch_async(dispatch_get_main_queue(), ^{
-    [self.discoveredPeripheralsByUuid removeAllObjects];
+    // SR-7 等は「直前に検出した CBPeripheral」を connect に使う方が安定する。
+    // 毎回クリアすると一覧からの retrieve のみになり失敗率が上がるためマージのみとする。
     [self.reader scan];
   });
 }
@@ -96,13 +106,60 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
 
 #pragma mark - Connect / inventory / power
 
+/// iOS は CoreBluetooth の仕様で、未スキャンだと retrievePeripheralsWithIdentifiers が空のことがある。
+/// ペアリング済み表示は UserDefaults 等で出せても、接続には「一度検出した」peripheral が必要な機種がある（SR-7 等）。
+- (nullable CBPeripheral *)waitForPeripheralWithUuidString:(NSString *)uuidString
+                                                timeoutSec:(NSTimeInterval)timeoutSec {
+  if (uuidString.length == 0) return nil;
+  CBPeripheral *cached = self.discoveredPeripheralsByUuid[uuidString];
+  if (cached) return cached;
+
+  self.pendingDiscoverUuid = uuidString;
+  self.pendingDiscoveredPeripheral = nil;
+  dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+  self.pendingDiscoverSem = sem;
+
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self.reader stopScan];
+    [self.reader scan];
+  });
+
+  dispatch_time_t t = dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeoutSec * NSEC_PER_SEC));
+  long r = dispatch_semaphore_wait(sem, t);
+
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self.reader stopScan];
+  });
+
+  if (r != 0) {
+    self.pendingDiscoverSem = nil;
+    self.pendingDiscoverUuid = nil;
+    self.pendingDiscoveredPeripheral = nil;
+    return nil;
+  }
+  CBPeripheral *out = self.pendingDiscoveredPeripheral;
+  self.pendingDiscoveredPeripheral = nil;
+  return out;
+}
+
 - (BOOL)connectWithName:(NSString *)name
                 address:(NSString *)address
                outError:(NSError *__autoreleasing *)outError {
+  [self.connectLock lock];
+  @try {
+    return [self connectWithNameLocked:name address:address outError:outError];
+  } @finally {
+    [self.connectLock unlock];
+  }
+}
+
+- (BOOL)connectWithNameLocked:(NSString *)name
+                      address:(NSString *)address
+                     outError:(NSError *__autoreleasing *)outError {
   if (name.length == 0 || address.length == 0) {
     if (outError) {
       *outError = [NSError errorWithDomain:@"TssRfidSdkSession" code:10
-                                  userInfo:@{NSLocalizedDescriptionKey: @"name/address が空です"}];
+                                  userInfo:@{NSLocalizedDescriptionKey: @"端末情報が不正です。一覧から接続し直してください。"}];
     }
     return NO;
   }
@@ -110,7 +167,7 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
   if (!uuid) {
     if (outError) {
       *outError = [NSError errorWithDomain:@"TssRfidSdkSession" code:11
-                                  userInfo:@{NSLocalizedDescriptionKey: @"address が UUID 形式ではありません"}];
+                                  userInfo:@{NSLocalizedDescriptionKey: @"端末の識別子が正しくありません。スキャンで表示された端末から接続してください。"}];
     }
     return NO;
   }
@@ -120,26 +177,44 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
     p = rets.firstObject;
   }
   if (!p) {
+    // 手動スキャンなしでも接続できるよう、短時間だけスキャンして同じ UUID を捕捉する
+    p = [self waitForPeripheralWithUuidString:address timeoutSec:12.0];
+  }
+  if (!p) {
     if (outError) {
       *outError = [NSError errorWithDomain:@"TssRfidSdkSession" code:12
                                   userInfo:@{
                                     NSLocalizedDescriptionKey:
-                                      @"端末が見つかりません。スキャンで検出してから接続してください。"
+                                      @"端末が見つかりません。リーダーの電源と距離を確認し、再度お試しください。"
                                   }];
     }
     return NO;
   }
 
-  // 機種によっては UI 側表示名と SDK 初期化に必要な名前が微妙に異なるため、
-  // retrieve で得た peripheral.name を優先する。
-  NSString *readerName = p.name ?: name;
-  readerName = [readerName stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  // retrieve だけだと name が nil のことがあり、SR-7 は initReader に正しい端末名が必要な場合がある。
+  // 一覧（Flutter）から渡した name を優先し、あれば advertisement 名で上書き。
+  NSString *trimName = [name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  NSString *pName = p.name ? [p.name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] : @"";
+  NSString *readerName = (pName.length > 0) ? pName : trimName;
   if (readerName.length == 0) {
     if (outError) {
       *outError = [NSError errorWithDomain:@"TssRfidSdkSession" code:16
-                                  userInfo:@{NSLocalizedDescriptionKey: @"接続対象の端末名を取得できませんでした"}];
+                                  userInfo:@{NSLocalizedDescriptionKey: @"端末名を取得できませんでした。「新しいタグリーダーとペアリング設定」でスキャンし、表示された端末から接続してください。"}];
     }
     return NO;
+  }
+
+  // 既に別セッションで接続中だと SR-7 側が接続拒否・不安定になることがあるため一度切る。
+  __block BOOL wasConnected = NO;
+  TssRfidPerformOnMain(^{
+    wasConnected = [self.reader isConnect];
+    if (wasConnected) {
+      [self.reader disconnect];
+    }
+  });
+  if (wasConnected) {
+    // disconnect の実完了は非同期のため、短時間待ってから次の connect（ログの sendBye Timeout 緩和）
+    [NSThread sleepForTimeInterval:0.45];
   }
 
   self.pendingConnectError = nil;
@@ -150,20 +225,23 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
   dispatch_async(dispatch_get_main_queue(), ^{
     // 機種によっては scan 中接続で失敗率が上がるため、接続前に明示停止する。
     [self.reader stopScan];
-    [self.reader initReader:readerName];
-    if (![self.reader connect:p]) {
-      [self finishConnectWithSuccess:NO
-                               error:[NSError errorWithDomain:@"TssRfidSdkSession" code:13
-                                                       userInfo:@{NSLocalizedDescriptionKey: @"connect 要求に失敗"}]];
-    }
+    // メインで sleep すると UI が固まるため、少し遅らせてから init/connect
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+      [self.reader initReader:readerName];
+      if (![self.reader connect:p]) {
+        [self finishConnectWithSuccess:NO
+                                 error:[NSError errorWithDomain:@"TssRfidSdkSession" code:13
+                                                         userInfo:@{NSLocalizedDescriptionKey: @"リーダーへの接続要求に失敗しました。Bluetoothをオンにし、リーダーの電源を確認してから再度お試しください。"}]];
+      }
+    });
   });
 
-  dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, (int64_t)(15.0 * NSEC_PER_SEC));
+  dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20.0 * NSEC_PER_SEC));
   long result = dispatch_semaphore_wait(sem, timeout);
   if (result != 0) {
     if (outError) {
       *outError = [NSError errorWithDomain:@"TssRfidSdkSession" code:14
-                                  userInfo:@{NSLocalizedDescriptionKey: @"接続タイムアウト"}];
+                                  userInfo:@{NSLocalizedDescriptionKey: @"リーダーからの応答がありません（タイムアウト）。電源・距離を確認し、数秒待ってから再接続してください。"}];
     }
     self.pendingConnectSem = nil;
     return NO;
@@ -171,7 +249,7 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
   if (!self.connectWaitOutcome) {
     if (outError) {
       *outError = self.pendingConnectError ?: [NSError errorWithDomain:@"TssRfidSdkSession" code:15
-                                                              userInfo:@{NSLocalizedDescriptionKey: @"接続に失敗"}];
+                                                              userInfo:@{NSLocalizedDescriptionKey: @"接続に失敗しました。他の端末が同じリーダーに接続していないか確認してください。"}];
     }
     self.pendingConnectError = nil;
     return NO;
@@ -282,9 +360,22 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
 
 #pragma mark - Known devices
 
+- (NSSet<NSString *> *)hiddenAddressSet {
+  NSArray *arr = [[NSUserDefaults standardUserDefaults] arrayForKey:kHiddenAddressesKey];
+  if (![arr isKindOfClass:[NSArray class]]) return [NSSet set];
+  NSMutableSet *s = [NSMutableSet set];
+  for (id o in arr) {
+    if ([o isKindOfClass:[NSString class]] && [(NSString *)o length] > 0) {
+      [s addObject:o];
+    }
+  }
+  return s;
+}
+
 - (NSArray<NSDictionary *> *)mergedKnownBondedStyleDevices {
   NSMutableArray *out = [NSMutableArray array];
   NSMutableSet<NSString *> *seen = [NSMutableSet set];
+  NSSet<NSString *> *hidden = [self hiddenAddressSet];
 
   NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
   NSArray *raw = [defaults arrayForKey:kKnownDevicesKey];
@@ -295,6 +386,7 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
       NSString *name = d[@"name"];
       NSString *addr = d[@"address"];
       if (name.length == 0 || addr.length == 0) continue;
+      if ([hidden containsObject:addr]) continue;
       if ([seen containsObject:addr]) continue;
       [seen addObject:addr];
       [out addObject:@{@"name": name, @"address": addr}];
@@ -305,6 +397,7 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
     NSArray *connected = [self.reader retrieveConnectedPeripherals];
     for (CBPeripheral *p in connected) {
       NSString *addr = [[p identifier] UUIDString];
+      if ([hidden containsObject:addr]) continue;
       if ([seen containsObject:addr]) continue;
       [seen addObject:addr];
       NSString *name = p.name ?: @"";
@@ -318,6 +411,47 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
   return [out copy];
 }
 
+- (BOOL)removeKnownDeviceWithAddress:(NSString *)address {
+  if (address.length == 0) return NO;
+  [self.discoveredPeripheralsByUuid removeObjectForKey:address];
+
+  NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+  NSArray *raw = [defaults arrayForKey:kKnownDevicesKey];
+  NSMutableArray *next = [NSMutableArray array];
+  BOOL foundInKnown = NO;
+  if ([raw isKindOfClass:[NSArray class]]) {
+    for (id item in raw) {
+      if (![item isKindOfClass:[NSDictionary class]]) continue;
+      NSString *a = ((NSDictionary *)item)[@"address"];
+      if ([a isEqualToString:address]) {
+        foundInKnown = YES;
+        continue;
+      }
+      [next addObject:item];
+    }
+  }
+  if (foundInKnown) {
+    [defaults setObject:[next copy] forKey:kKnownDevicesKey];
+  }
+
+  NSMutableArray *hiddenList = [[defaults arrayForKey:kHiddenAddressesKey] mutableCopy];
+  if (!hiddenList) hiddenList = [NSMutableArray array];
+  BOOL alreadyHidden = NO;
+  for (id o in hiddenList) {
+    if ([o isKindOfClass:[NSString class]] && [(NSString *)o isEqualToString:address]) {
+      alreadyHidden = YES;
+      break;
+    }
+  }
+  if (!alreadyHidden) {
+    [hiddenList addObject:address];
+    [defaults setObject:[hiddenList copy] forKey:kHiddenAddressesKey];
+  }
+
+  [defaults synchronize];
+  return foundInKnown || !alreadyHidden;
+}
+
 #pragma mark - ReaderDelegate
 
 - (void)didUpdateCentralManagerState {
@@ -326,10 +460,18 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
 - (void)didDiscoverDevice:(CBPeripheral *)peripheral {
   NSString *name = peripheral.name ?: @"";
   NSString *addr = [[peripheral identifier] UUIDString];
-  if (!TssRfidIsLikelyReaderName(name)) return;
   if (addr.length > 0) {
     self.discoveredPeripheralsByUuid[addr] = peripheral;
   }
+  // 接続補助: 名前フィルタ前に UUID 一致で完了（advertisement 名が遅延する機種対策）
+  if (self.pendingDiscoverSem != nil && [addr isEqualToString:self.pendingDiscoverUuid]) {
+    self.pendingDiscoveredPeripheral = peripheral;
+    dispatch_semaphore_t s = self.pendingDiscoverSem;
+    self.pendingDiscoverSem = nil;
+    self.pendingDiscoverUuid = nil;
+    dispatch_semaphore_signal(s);
+  }
+  if (!TssRfidIsLikelyReaderName(name)) return;
   [self emit:@{@"type": @"ble_device_found", @"name": name, @"address": addr}];
 }
 
@@ -346,7 +488,10 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
 - (void)onConnectFail {
   [self finishConnectWithSuccess:NO
                            error:[NSError errorWithDomain:@"TssRfidSdkSession" code:30
-                                                   userInfo:@{NSLocalizedDescriptionKey: @"onConnectFail"}]];
+                                                   userInfo:@{
+                                                     NSLocalizedDescriptionKey:
+                                                       @"リーダー側で接続を拒否したか、通信に失敗しました。電源・至近距離・他スマホ／PCとの同時接続を確認し、一度スキャンしてから再接続してください。"
+                                                   }]];
 }
 
 - (void)onConnectFail:(NSString *)message {

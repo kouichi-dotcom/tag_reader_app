@@ -7,6 +7,8 @@ import '../config/api_config.dart';
 import '../models/inventory_epc.dart';
 import '../models/product_update_request.dart';
 import '../services/employee_storage.dart';
+import '../services/hardware_trigger_handler.dart';
+import '../services/hardware_trigger_mode_storage.dart';
 import '../services/product_cache.dart';
 import '../services/storage_location_storage.dart';
 import '../services/tag_ledger_cache.dart';
@@ -67,7 +69,9 @@ class _TagListScreenState extends State<TagListScreen> {
 
   final _reader = TagReaderService.instance;
   StreamSubscription<InventoryEpc>? _invSub;
-  StreamSubscription<bool>? _triggerSub;
+  HardwareTriggerHandler? _hwTriggerHandler;
+  HardwareTriggerMode _hwTriggerMode = HardwareTriggerMode.toggle;
+  int _hwTimedSeconds = HardwareTriggerModeStorage.timedSecondsDefault;
 
   int get _pendingCount => _selectedForSend.length;
 
@@ -130,6 +134,7 @@ class _TagListScreenState extends State<TagListScreen> {
 
   /// 読取停止（ボタン・トリガー両方から利用）
   Future<void> _stopInventoryAndState() async {
+    _hwTriggerHandler?.notifyStoppedByAppButton();
     await _invSub?.cancel();
     _invSub = null;
     await _reader.stopInventory();
@@ -276,19 +281,6 @@ class _TagListScreenState extends State<TagListScreen> {
     }
   }
 
-  /// トリガー: 1回押しで読取ON、もう1回押しでOFF（トグルに統一）。
-  void _listenTrigger() {
-    _triggerSub?.cancel();
-    _triggerSub = _reader.triggerStream.listen((pressed) async {
-      if (!mounted || !pressed) return;
-      if (_isReading) {
-        await _stopInventoryAndState();
-      } else {
-        await _startInventoryIfReady();
-      }
-    });
-  }
-
   Future<void> _toggleRead() async {
     if (_isReading) {
       await _stopInventoryAndState();
@@ -297,15 +289,37 @@ class _TagListScreenState extends State<TagListScreen> {
     await _startInventoryIfReady();
   }
 
+  Future<void> _loadHardwareTriggerHints() async {
+    final m = await HardwareTriggerModeStorage.getMode();
+    final s = await HardwareTriggerModeStorage.getTimedSeconds();
+    if (mounted) {
+      setState(() {
+        _hwTriggerMode = m;
+        _hwTimedSeconds = s;
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
-    if (_reader.supportsNativeRfid) _listenTrigger();
+    unawaited(_loadHardwareTriggerHints());
+    if (_reader.supportsNativeRfid) {
+      _hwTriggerHandler = HardwareTriggerHandler(
+        onStart: _startInventoryIfReady,
+        onStop: _stopInventoryAndState,
+        isReading: () => _isReading,
+        mounted: () => mounted,
+      );
+      unawaited(_hwTriggerHandler!.attach(_reader));
+    }
   }
 
   @override
   void dispose() {
-    _triggerSub?.cancel();
+    if (_hwTriggerHandler != null) {
+      unawaited(_hwTriggerHandler!.cancelSubscriptionOnly());
+    }
     _invSub?.cancel();
     _reader.stopInventory();
     super.dispose();
@@ -514,9 +528,13 @@ class _TagListScreenState extends State<TagListScreen> {
                       ),
                       if (_reader.supportsNativeRfid) ...[
                         const SizedBox(height: 4),
-                        const Text(
-                          'トリガー: 1回押しで読取ON、もう1回押しでOFF',
-                          style: TextStyle(fontSize: 12, color: Color(0xFF888888)),
+                        Text(
+                          HardwareTriggerModeStorage.describeForTagList(
+                            _hwTriggerMode,
+                            _hwTimedSeconds,
+                          ),
+                          style: const TextStyle(fontSize: 12, color: Color(0xFF888888)),
+                          textAlign: TextAlign.center,
                         ),
                       ],
                       if (!_reader.supportsNativeRfid) ...[
@@ -595,7 +613,9 @@ class _TagListScreenState extends State<TagListScreen> {
                                 const SizedBox(height: 8),
                                 Text(
                                   _reader.supportsNativeRfid
-                                      ? '読取開始ボタンまたはリーダーのトリガー（押している間）で読み取れます'
+                                      ? HardwareTriggerModeStorage.describeEmptyStateHint(
+                                          _hwTriggerMode,
+                                        )
                                       : '「テスト: ランダムに1件読み取り」でAPIから取得',
                                   style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                                   textAlign: TextAlign.center,
@@ -605,7 +625,7 @@ class _TagListScreenState extends State<TagListScreen> {
                           )
                         : ListView.separated(
                           itemCount: _reads.length,
-                          separatorBuilder: (_, __) => const Divider(
+                          separatorBuilder: (_, _) => const Divider(
                             height: 1,
                             thickness: 1,
                             color: Color(0xFF9E9E9E),
