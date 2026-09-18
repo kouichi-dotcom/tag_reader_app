@@ -1,0 +1,36 @@
+---
+description: scrcpy でスマホ画面をミラーリング。「スマホ画面を映して」等と言われたら実行する
+alwaysApply: true
+---
+
+# scrcpy（スマホ画面ミラーリング）
+
+ユーザーがスマホ画面の表示・ミラーリング・スクショ用の scrcpy 起動を頼んだら、説明だけで終わらせず **Shell で実際に起動**する。GUI の長時間プロセスなので `block_until_ms: 0` でバックグラウンド起動する。
+
+## パス
+
+- scrcpy フォルダ: `C:\Users\kouichiPC\Desktop\scrcpy-win64-v4.1\scrcpy-win64-v4.1`
+
+## 起動コマンド（優先）
+
+コンソールウィンドウを出さない VBS を使う（推奨）:
+
+```powershell
+wscript "C:\Users\kouichiPC\Desktop\scrcpy-win64-v4.1\scrcpy-win64-v4.1\scrcpy-noconsole.vbs" --no-audio
+```
+
+VBS が使えない場合の代替:
+
+```powershell
+cd "C:\Users\kouichiPC\Desktop\scrcpy-win64-v4.1\scrcpy-win64-v4.1"; .\scrcpy.exe --no-audio
+```
+
+## 言い方の解釈
+
+- 「スマホ画面を映して」「scrcpy 起動」「スマホをミラーリング」など → 上記コマンドで起動
+- 音声ありで起動したい場合 → `--no-audio` を外す
+
+## 注意
+
+- 既に scrcpy が動いていれば二重起動しない（terminals / プロセスを確認）
+- USB デバッグ有効・USB 接続（または adb 接続）が前提。起動失敗時は adb devices で確認を促す

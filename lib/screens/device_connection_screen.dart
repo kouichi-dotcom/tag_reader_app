@@ -1,13 +1,17 @@
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import '../mocks/mock_data.dart';
 import '../services/connected_device_storage.dart';
+import '../services/hardware_trigger_mode_storage.dart';
 import '../services/tag_reader_service.dart';
 import '../theme/app_design.dart';
 import '../utils/connect_error_messages.dart';
+import '../widgets/main_flow_nav_bar.dart';
 
 /// 画面 1: タグリーダー接続（design/screen1-connection-wireframe.html 準拠）
 /// スキャン・デバイス一覧・接続・切断
@@ -20,7 +24,8 @@ class DeviceConnectionScreen extends StatefulWidget {
   State<DeviceConnectionScreen> createState() => _DeviceConnectionScreenState();
 }
 
-class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
+class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
+    with WidgetsBindingObserver {
   List<MockBleDevice> _bondedDevices = [];
   List<MockBleDevice> _scannedBleDevices = [];
   MockBleDevice? _connectedDevice;
@@ -36,6 +41,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadSavedConnection();
     // ペアリング済み一覧はスキャン不要で表示（ネイティブは getBondedDevices、モックは固定リスト）
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -66,9 +72,19 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _sub?.cancel();
     _bleScanSub?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed && mounted && _reader.supportsNativeRfid) {
+      _loadBondedDevices();
+      _loadSavedConnection();
+    }
   }
 
   /// ペアリング済み（登録済み）デバイス一覧のみ取得。BLE スキャンは開始しない。
@@ -77,7 +93,15 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
     try {
       if (_reader.supportsNativeRfid) {
         final ok = await _reader.requestBluetoothPermissions();
-        if (!ok || !mounted) return;
+        if (!ok) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Bluetooth権限が必要です。設定から許可してください。')),
+            );
+          }
+          return;
+        }
+        if (!mounted) return;
         final bonded = await _reader.getBondedDevices();
         if (!mounted) return;
         setState(() {
@@ -90,11 +114,40 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
           _bondedDevices = List.from(mockBleDevices);
         });
       }
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      if (e.code == 'permission_required') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Bluetooth権限が必要です。設定から許可してください。')),
+        );
+      } else if (e.code == 'bluetooth_off') {
+        await _promptEnableBluetooth();
+      } else {
+        debugPrint('getBondedDevices failed: $e');
+      }
     } catch (e) {
       if (mounted) {
         debugPrint('getBondedDevices failed: $e');
       }
     }
+  }
+
+  Future<void> _promptEnableBluetooth() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('BluetoothがOFFです'),
+        content: const Text('BluetoothをONにしてから再度お試しください。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('閉じる'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadSavedConnection() async {
@@ -164,6 +217,21 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
           _scannedBleDevices = List.from(mockScannedBleDevices);
         });
       }
+    } on PlatformException catch (e) {
+      if (mounted) {
+        if (e.code == 'permission_required') {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Bluetooth権限が必要です。設定から許可してください。')),
+          );
+        } else if (e.code == 'bluetooth_off') {
+          await _promptEnableBluetooth();
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('スキャン失敗: $e')),
+          );
+        }
+        setState(() => _isScanning = false);
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -197,6 +265,9 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
       _isConnecting = true;
       _connectingDevice = device;
     });
+    // ネイティブ connect がメインスレッドを占有すると 1 フレームも描画されないことがあるため、
+    // 接続処理の前に 1 フレーム分待ってスピナーを表示する。
+    await SchedulerBinding.instance.endOfFrame;
 
     try {
       final ok = await _reader.connect(name: device.name, address: device.id);
@@ -223,7 +294,16 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
         _connectedDevice = device;
         _firmwareVersion = (fw != null && fw.isNotEmpty) ? fw : _firmwareVersion;
       });
-      ConnectedDeviceStorage.save(device.id, device.name);
+      await ConnectedDeviceStorage.save(device.id, device.name);
+      final forced = await HardwareTriggerModeStorage.forceToggleIfSr7AndHold();
+      if (forced && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('SR-7接続のため、読取ボタン設定を「切替式」に自動変更しました。'),
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
     } on PlatformException catch (e) {
       if (mounted) {
         setState(() {
@@ -269,6 +349,22 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
     }
   }
 
+  /// 接続中の「ぐるぐる」。iOS は CupertinoActivityIndicator、それ以外は色付き CircularProgressIndicator。
+  Widget _connectionProgressIndicator(BuildContext context, {double size = 22}) {
+    final isIOS = Theme.of(context).platform == TargetPlatform.iOS;
+    if (isIOS) {
+      return CupertinoActivityIndicator(radius: size / 2);
+    }
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CircularProgressIndicator(
+        strokeWidth: 2.5,
+        color: AppDesign.primaryButton,
+      ),
+    );
+  }
+
   Widget _sectionHeader(String title) {
     return Padding(
       padding: const EdgeInsets.only(top: 8, bottom: 4),
@@ -291,8 +387,11 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
         title: const Text('一覧から削除しますか？'),
         content: Text(
           _reader.supportsNativeRfid
-              ? 'このアプリの一覧から削除します。\n'
-                  '（OS の Bluetooth 設定でペアリング解除する操作ではありません。Android は端末のペアリングは残り、アプリ上だけ非表示になります。）'
+              ? (_reader.isAndroid
+                  ? 'OS の Bluetooth 設定でペアリング解除します。\n'
+                      'あわせてこのアプリ側の保存データ（接続候補など）も削除します。'
+                  : 'このアプリの一覧から削除します。\n'
+                      '（OS の Bluetooth 設定でペアリング解除する操作ではありません。）')
               : '一覧からこのデバイスを削除します。',
         ),
         actions: [
@@ -325,6 +424,11 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
     }
   }
 
+  Future<void> _onDeleteBondedDeviceTap(MockBleDevice device) async {
+    if (!await _confirmRemoveBondedDevice(device)) return;
+    await _removeBondedDevice(device);
+  }
+
   Widget _bondedDeviceCard(MockBleDevice device) {
     return Dismissible(
       key: ValueKey<String>('bonded_${device.id}'),
@@ -340,22 +444,40 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
         color: Colors.red,
         child: const Icon(Icons.delete_outline, color: Colors.white, size: 28),
       ),
-      child: _deviceCard(device),
+      child: _deviceCard(
+        device,
+        onDelete: () {
+          _onDeleteBondedDeviceTap(device);
+        },
+      ),
     );
   }
 
-  Widget _deviceCard(MockBleDevice device) {
+  Widget _deviceCard(
+    MockBleDevice device, {
+    VoidCallback? onDelete,
+  }) {
     final isConnected = _connectedDevice?.id == device.id;
     final isThisConnecting = _connectingDevice?.id == device.id;
+    final connectButton = ElevatedButton(
+      onPressed: _isConnecting
+          ? null
+          : () {
+              _connect(device);
+            },
+      style: ElevatedButton.styleFrom(
+        backgroundColor: AppDesign.primaryButton,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      ),
+      child: const Text('接続'),
+    );
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
         leading: isThisConnecting
-            ? const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
+            ? _connectionProgressIndicator(context, size: 26)
             : Icon(
                 isConnected ? Icons.bluetooth_connected : Icons.bluetooth,
                 color: isConnected ? AppDesign.statusOk : null,
@@ -376,33 +498,38 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
               )
             : isThisConnecting
                 ? Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                        _connectionProgressIndicator(context, size: 22),
+                        const SizedBox(width: 10),
+                        const Text(
+                          '接続中…',
+                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                         ),
-                        const SizedBox(width: 8),
-                        const Text('接続中...', style: TextStyle(fontSize: 14)),
                       ],
                     ),
                   )
-                : ElevatedButton(
-                    onPressed: _isConnecting
-                        ? null
-                        : () {
-                            _connect(device);
-                          },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppDesign.primaryButton,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                    ),
-                    child: const Text('接続'),
-                  ),
+                : (onDelete != null
+                    ? Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          connectButton,
+                          IconButton(
+                            onPressed: onDelete,
+                            icon: const Icon(Icons.delete_outline),
+                            tooltip: '削除',
+                            color: Colors.red,
+                            padding: const EdgeInsets.only(left: 8),
+                            constraints: const BoxConstraints(
+                              minWidth: 36,
+                              minHeight: 36,
+                            ),
+                          ),
+                        ],
+                      )
+                    : connectButton),
       ),
     );
   }
@@ -419,7 +546,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _NavBar(
+                MainFlowNavBar(
                   showBackButton: widget.showBackButton,
                   title: 'タグリーダー接続',
                   onBack: () => Navigator.of(context).pop(),
@@ -435,11 +562,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
                   child: Row(
                     children: [
                       if (_isConnecting)
-                        const SizedBox(
-                          width: 28,
-                          height: 28,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
+                        _connectionProgressIndicator(context, size: 28)
                       else
                         Icon(
                           _connectedDevice != null ? Icons.link : Icons.link_off,
@@ -535,57 +658,6 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen> {
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _NavBar extends StatelessWidget {
-  const _NavBar({
-    required this.showBackButton,
-    required this.title,
-    required this.onBack,
-  });
-
-  final bool showBackButton;
-  final String title;
-  final VoidCallback onBack;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(
-        color: AppDesign.navBarBackground,
-        border: Border(bottom: BorderSide(color: AppDesign.navBarBorder, width: 1)),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Row(
-          children: [
-            if (showBackButton)
-              TextButton(
-                onPressed: onBack,
-                style: TextButton.styleFrom(
-                  foregroundColor: AppDesign.primaryLink,
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: const Text('← メインに戻る', style: TextStyle(fontSize: 16)),
-              )
-            else
-              const SizedBox(width: 100),
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.black),
-                textAlign: TextAlign.center,
-              ),
-            ),
-            const SizedBox(width: 100),
-          ],
         ),
       ),
     );

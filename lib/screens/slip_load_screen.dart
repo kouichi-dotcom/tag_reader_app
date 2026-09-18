@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
-import '../config/api_config.dart';
 import '../models/slip_list_filter.dart';
 import '../services/employee_storage.dart';
 import '../theme/app_design.dart';
 import '../widgets/app_notification.dart';
+import '../widgets/main_flow_nav_bar.dart';
 import 'slip_list_screen.dart';
 
 /// 伝票読込画面。担当伝票・全伝票・来店伝票のいずれかを選んで一覧へ進む。
@@ -25,8 +25,9 @@ class SlipLoadScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _NavBar(
+                MainFlowNavBar(
                   showBackButton: showBackButton,
+                  title: '伝票読込',
                   onBack: () => Navigator.of(context).pop(),
                 ),
                 Expanded(
@@ -60,6 +61,8 @@ class SlipLoadScreen extends StatelessWidget {
                                         showBackButton: true,
                                         listTitle: '担当伝票のみ表示',
                                         filter: SlipListFilter(assigneeCode: code.trim()),
+                                        subjectFilterOptions:
+                                            SlipListScreen.allSubjectFilterOptions,
                                       ),
                                     ),
                                   );
@@ -71,16 +74,15 @@ class SlipLoadScreen extends StatelessWidget {
                                 backgroundColor: const Color(0xFFFCE4EC),
                                 textColor: const Color(0xFFB71C1C),
                                 onPressed: () {
-                                  // 日付指定なしで最新10件（転記済=0のみ）。ローカルはランダム10件でテスト可能
-                                  final filter = kIsProductionDb
-                                      ? SlipListFilter(random: false)
-                                      : SlipListFilter.randomForTest;
+                                  // 日付指定なし・受付日時の新しい順で最新10件（転記済=0のみ）
                                   Navigator.of(context).push(
                                     MaterialPageRoute<void>(
                                       builder: (_) => SlipListScreen(
                                         showBackButton: true,
                                         listTitle: '全伝票一覧',
-                                        filter: filter,
+                                        filter: SlipListFilter.all,
+                                        subjectFilterOptions:
+                                            SlipListScreen.allSubjectFilterOptions,
                                       ),
                                     ),
                                   );
@@ -98,6 +100,8 @@ class SlipLoadScreen extends StatelessWidget {
                                         showBackButton: true,
                                         listTitle: '来店伝票一覧',
                                         filter: SlipListFilter.visitSlipOnly,
+                                        subjectFilterOptions:
+                                            SlipListScreen.visitSubjectFilterOptions,
                                       ),
                                     ),
                                   );
@@ -113,52 +117,6 @@ class SlipLoadScreen extends StatelessWidget {
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _NavBar extends StatelessWidget {
-  const _NavBar({required this.showBackButton, required this.onBack});
-
-  final bool showBackButton;
-  final VoidCallback onBack;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(
-        color: AppDesign.navBarBackground,
-        border: Border(bottom: BorderSide(color: AppDesign.navBarBorder, width: 1)),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Row(
-          children: [
-            if (showBackButton)
-              TextButton(
-                onPressed: onBack,
-                style: TextButton.styleFrom(
-                  foregroundColor: AppDesign.primaryLink,
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: const Text('← メイン', style: TextStyle(fontSize: 16)),
-              )
-            else
-              const SizedBox(width: 52),
-            const Expanded(
-              child: Text(
-                '伝票読込',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.black),
-                textAlign: TextAlign.center,
-              ),
-            ),
-            const SizedBox(width: 52),
-          ],
         ),
       ),
     );

@@ -51,6 +51,9 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
 @property (nonatomic, copy, nullable) NSString *pendingDiscoverUuid;
 @property (nonatomic, strong, nullable) dispatch_semaphore_t pendingDiscoverSem;
 @property (nonatomic, strong, nullable) CBPeripheral *pendingDiscoveredPeripheral;
+
+/// 削除済み（非表示化）端末は、名前判定で ble_device_found を捨てないためのキャッシュ
+@property (nonatomic, strong) NSSet<NSString *> *scanHiddenSet;
 @end
 
 @implementation TssRfidSdkSession
@@ -72,6 +75,7 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
     _epcLastNotifiedAtMs = [NSMutableDictionary dictionary];
     _discoveredPeripheralsByUuid = [NSMutableDictionary dictionary];
     _connectLock = [[NSLock alloc] init];
+    _scanHiddenSet = [NSSet set];
   }
   return self;
 }
@@ -91,6 +95,7 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
 #pragma mark - BLE scan (TSS_SDK)
 
 - (void)startBleScan {
+  self.scanHiddenSet = [self hiddenAddressSet];
   dispatch_async(dispatch_get_main_queue(), ^{
     // SR-7 等は「直前に検出した CBPeripheral」を connect に使う方が安定する。
     // 毎回クリアすると一覧からの retrieve のみになり失敗率が上がるためマージのみとする。
@@ -304,9 +309,8 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
   __block BOOL ok = NO;
   TssRfidPerformOnMain(^{
     [self.reader setNoRepeat:noRepeat];
-    if (!noRepeat) {
-      [self.reader clearAccessEPCList];
-    }
+    // 読取セッション開始のたびにクリア。noRepeat=YES でも前回の EPC が残ると再通知されない。
+    [self.reader clearAccessEPCList];
     [self.reader setInventoryReportMode:dateTime reportRSSI:radioPower];
     ok = [self.reader inventoryTag:NO maskFlag:DOTRMaskFlagNone timeout:0];
   });
@@ -350,6 +354,64 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
   if (!ok && outError) {
     *outError = [NSError errorWithDomain:@"TssRfidSdkSession" code:21
                                 userInfo:@{NSLocalizedDescriptionKey: @"setRadioPower に失敗"}];
+  }
+  return ok;
+}
+
+- (BOOL)writeEpcWithCurrentEpc:(NSString *)currentEpc
+                        newEpc:(NSString *)newEpc
+                      outError:(NSError *__autoreleasing *)outError {
+  NSString *cur = [[currentEpc stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] lowercaseString];
+  NSString *nxt = [[newEpc stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] lowercaseString];
+  if (cur.length == 0 || nxt.length == 0) {
+    if (outError) {
+      *outError = [NSError errorWithDomain:@"TssRfidSdkSession" code:30
+                                  userInfo:@{NSLocalizedDescriptionKey: @"currentEpc / newEpc が空です"}];
+    }
+    return NO;
+  }
+  if (nxt.length % 4 != 0) {
+    if (outError) {
+      *outError = [NSError errorWithDomain:@"TssRfidSdkSession" code:31
+                                  userInfo:@{NSLocalizedDescriptionKey: @"newEpc の桁数が不正です"}];
+    }
+    return NO;
+  }
+
+  __block BOOL ok = NO;
+  TssRfidPerformOnMain(^{
+    [self.reader stop];
+    [NSThread sleepForTimeInterval:0.15];
+    [self.reader clearAccessEPCList];
+    [self.reader setQValue:0];
+
+    // 前回マスクをクリア（公式サンプルはマスクなし書込み）
+    [self.reader setTagAccessMask:DOTRMemoryBankEPC
+                       maskOffset:0
+                         maskBits:0
+                      maskPattern:@"0000"];
+
+    DOTRTagAccessParameter *param =
+        [[DOTRTagAccessParameter alloc] initWithParameter:(int)(nxt.length / 4)
+                                               memoryBank:DOTRMemoryBankEPC
+                                               wordOffset:2
+                                                 password:0];
+    // timeout=0: 成功か stop まで継続 / singleTag=YES: 1枚で終了
+    ok = [self.reader writeTag:param
+                     writeData:nxt
+                     singleTag:YES
+                      maskFlag:DOTRMaskFlagNone
+                       timeout:0];
+    [self emit:@{
+      @"type": @"write_tag_started",
+      @"ok": @(ok),
+      @"newEpc": nxt ?: @"",
+    }];
+  });
+  if (!ok && outError) {
+    *outError = [NSError errorWithDomain:@"TssRfidSdkSession" code:32
+                                userInfo:@{NSLocalizedDescriptionKey: @"writeTag の開始に失敗"}];
+    [self emit:@{@"type": @"write_tag_failed", @"message": @"writeTag failed"}];
   }
   return ok;
 }
@@ -471,7 +533,8 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
     self.pendingDiscoverUuid = nil;
     dispatch_semaphore_signal(s);
   }
-  if (!TssRfidIsLikelyReaderName(name)) return;
+  BOOL isHidden = [self.scanHiddenSet containsObject:addr];
+  if (!TssRfidIsLikelyReaderName(name) && !isHidden) return;
   [self emit:@{@"type": @"ble_device_found", @"name": name, @"address": addr}];
 }
 

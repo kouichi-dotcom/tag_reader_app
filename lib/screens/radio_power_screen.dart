@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../services/tag_reader_service.dart';
 import '../services/radio_power_storage.dart';
 import '../theme/app_design.dart';
+import '../widgets/main_flow_nav_bar.dart';
 
 /// 電波強度画面（メーターUI・既定値に戻す・±10/±1 ボタン）
 class RadioPowerScreen extends StatefulWidget {
@@ -114,7 +115,7 @@ class _RadioPowerScreenState extends State<RadioPowerScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _NavBar(
+                MainFlowNavBar(
                   showBackButton: widget.showBackButton,
                   title: '電波強度',
                   onBack: () => Navigator.of(context).pop(),
@@ -329,61 +330,6 @@ class _StepButton extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _NavBar extends StatelessWidget {
-  const _NavBar({
-    required this.showBackButton,
-    required this.title,
-    required this.onBack,
-  });
-
-  final bool showBackButton;
-  final String title;
-  final VoidCallback onBack;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(
-        color: AppDesign.navBarBackground,
-        border: Border(bottom: BorderSide(color: AppDesign.navBarBorder, width: 1)),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Row(
-          children: [
-            if (showBackButton)
-              TextButton(
-                onPressed: onBack,
-                style: TextButton.styleFrom(
-                  foregroundColor: AppDesign.primaryLink,
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: const Text('← メインに戻る', style: TextStyle(fontSize: 16)),
-              )
-            else
-              const SizedBox(width: 100),
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ),
-            const SizedBox(width: 100),
-          ],
-        ),
-      ),
     );
   }
 }

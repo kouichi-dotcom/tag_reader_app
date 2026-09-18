@@ -73,8 +73,10 @@ final class TssRfidPlugin: NSObject, FlutterStreamHandler {
       handleGetMaxRadioPower(result: result)
     case "setRadioPower":
       handleSetRadioPower(call: call, result: result)
+    case "writeTag":
+      handleWriteTag(call: call, result: result)
     case "setBeeperVolumeMin", "setGoodReadBeepOff":
-      // Android は接続後に onConnected で呼ぶ。iOS は SDK 実装後に対応。
+      // 方針 A: ここはスタブ（true）。接続時のミュートは TssRfidSdkSession.onConnected の trySetBuzzerMute。
       result(true)
     default:
       result(FlutterMethodNotImplemented)
@@ -184,6 +186,24 @@ final class TssRfidPlugin: NSObject, FlutterStreamHandler {
       result(FlutterError(code: "set_radio_power_failed", message: e.localizedDescription, details: nil))
     } catch {
       result(FlutterError(code: "set_radio_power_failed", message: "\(error)", details: nil))
+    }
+  }
+
+  private func handleWriteTag(call: FlutterMethodCall, result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any]
+    let currentEpc = (args?["currentEpc"] as? String) ?? ""
+    let newEpc = (args?["newEpc"] as? String) ?? ""
+    if currentEpc.isEmpty || newEpc.isEmpty {
+      result(FlutterError(code: "write_tag_failed", message: "currentEpc and newEpc are required.", details: nil))
+      return
+    }
+    do {
+      try TssRfidNativeBridge.writeEpc(withCurrentEpc: currentEpc, newEpc: newEpc)
+      result(true)
+    } catch let e as NSError {
+      result(FlutterError(code: "write_tag_failed", message: e.localizedDescription, details: nil))
+    } catch {
+      result(FlutterError(code: "write_tag_failed", message: "\(error)", details: nil))
     }
   }
 }

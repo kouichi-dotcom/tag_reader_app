@@ -15,6 +15,8 @@ import '../services/tag_ledger_cache.dart';
 import '../services/tag_reader_service.dart';
 import '../theme/app_design.dart';
 import '../widgets/app_notification.dart';
+import '../widgets/main_flow_nav_bar.dart';
+import '../widgets/reader_not_connected_dialog.dart';
 
 /// 画面 2: ICタグ読取・更新（design/screen2-tag-list-wireframe.html 準拠）
 /// 読取開始/停止、タグ一覧（EPC・商品名・ステータス）、送信待ち・送信ボタン
@@ -50,6 +52,9 @@ class _TagReadItem {
     required this.readAt,
     this.productCode,
     this.number,
+    this.fromCache = false,
+    this.needsDbLookup = false,
+    this.statusFromDb = false,
   });
   final String epc;
   final String productName;
@@ -57,21 +62,38 @@ class _TagReadItem {
   final String readAt;
   final int? productCode;
   final int? number;
+
+  /// ローカル台帳キャッシュで照合できた
+  final bool fromCache;
+
+  /// キャッシュ未ヒットのため、ユーザー操作で DB 照会が必要
+  final bool needsDbLookup;
+
+  /// fetchProduct で状態（tag_mode2）を取得済み
+  final bool statusFromDb;
 }
 
 class _TagListScreenState extends State<TagListScreen> {
   bool _isReading = false;
   final List<_TagReadItem> _reads = [];
+  /// ステータス一括更新用（チェックボックス）
+  final Set<int> _selectedForStatus = {};
+  /// 送信待ち（背景色で表示）
   final Set<int> _selectedForSend = {};
   final Set<int> _sentIndices = {};
   final Map<int, String> _statusOverrides = {};
+  /// 行ごとの DB 照会中インデックス
+  final Set<int> _dbQuerying = {};
   bool _randomLoading = false;
+  bool _isSending = false;
+  int _sendCompleted = 0;
+  int _sendTotal = 0;
 
   final _reader = TagReaderService.instance;
   StreamSubscription<InventoryEpc>? _invSub;
   HardwareTriggerHandler? _hwTriggerHandler;
   HardwareTriggerMode _hwTriggerMode = HardwareTriggerMode.toggle;
-  int _hwTimedSeconds = HardwareTriggerModeStorage.timedSecondsDefault;
+  double _hwTimedSeconds = HardwareTriggerModeStorage.timedSecondsDefault;
 
   int get _pendingCount => _selectedForSend.length;
 
@@ -85,6 +107,70 @@ class _TagListScreenState extends State<TagListScreen> {
     if (_statusOverrides.containsKey(index)) return _statusOverrides[index]!;
     if (index >= _reads.length) return '不明';
     return _reads[index].status.isEmpty ? '不明' : _reads[index].status;
+  }
+
+  /// 行の「DB確認」「状態を見る」「再取得」から呼ぶ。fetchProduct で商品・状態を更新する。
+  Future<void> _queryProductFromDb(int index) async {
+    if (!kUseApi) return;
+    if (index < 0 || index >= _reads.length) return;
+    if (_dbQuerying.contains(index)) return;
+
+    setState(() => _dbQuerying.add(index));
+    try {
+      final epc = _reads[index].epc;
+      final api = ApiClient(baseUrl: kApiBaseUrl);
+      final p = await api.fetchProduct(epc);
+      if (!mounted) return;
+      if (p == null) {
+        setState(() {
+          _statusOverrides.remove(index);
+          final cur = _reads[index];
+          _reads[index] = _TagReadItem(
+            epc: cur.epc,
+            productName: cur.productName,
+            status: 'データなし',
+            readAt: cur.readAt,
+            productCode: cur.productCode,
+            number: cur.number,
+            fromCache: cur.fromCache,
+            needsDbLookup: false,
+            statusFromDb: true,
+          );
+        });
+        return;
+      }
+      await TagLedgerCache.instance.put(
+        epc,
+        productCode: p.productCode,
+        number: p.number,
+      );
+      if (!mounted) return;
+      setState(() {
+        _statusOverrides.remove(index);
+        final cur = _reads[index];
+        _reads[index] = _TagReadItem(
+          epc: cur.epc,
+          productName: p.productName.isEmpty ? '商品不明' : p.productName,
+          status: p.status.isEmpty ? '不明' : p.status,
+          readAt: cur.readAt,
+          productCode: p.productCode,
+          number: p.number,
+          fromCache: cur.fromCache,
+          needsDbLookup: false,
+          statusFromDb: true,
+        );
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('DB照会に失敗しました: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _dbQuerying.remove(index));
+      }
+    }
   }
 
   /// テスト用: API からランダムに1件取得し、読み取りとして追加（WindowsなどAPI接続時のみ）
@@ -113,6 +199,7 @@ class _TagListScreenState extends State<TagListScreen> {
             readAt: readAt,
             productCode: p.productCode,
             number: p.number,
+            statusFromDb: true,
           ));
         });
       }
@@ -141,7 +228,7 @@ class _TagListScreenState extends State<TagListScreen> {
     if (mounted) setState(() => _isReading = false);
   }
 
-  /// 読取開始（ボタン・トリガー両方から利用）。Android 以外では何もしない。
+  /// 読取開始（ボタン・トリガー両方から利用）。RFID ネイティブ非対応では何もしない。
   Future<void> _startInventoryIfReady() async {
     if (_isReading) return;
     if (!_reader.supportsNativeRfid) return;
@@ -159,9 +246,7 @@ class _TagListScreenState extends State<TagListScreen> {
       return;
     }
     if (!okConn) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('タグリーダーが未接続です。先に「タグリーダー接続」で接続してください。')),
-      );
+      await showReaderNotConnectedDialog(context);
       setState(() => _isReading = false);
       return;
     }
@@ -173,93 +258,40 @@ class _TagListScreenState extends State<TagListScreen> {
       // 重複排除: 既に同じ EPC が一覧にあれば追加しない
       if (_reads.any((r) => r.epc == epc)) return;
 
-      final readAt = _formatNow();
-
-      final idx = _reads.length;
-      setState(() {
-        _reads.add(_TagReadItem(
-          epc: epc,
-          productName: '照合中…',
-          status: '不明',
-          readAt: readAt,
-        ));
-      });
-
-      // まずローカル台帳＋商品台帳で照合（APIが使えない開発時も本番同様に表示）
+      // まずローカル台帳＋商品台帳で照合（自動 API はしない）
       await TagLedgerCache.instance.init();
       await ProductCache.instance.init();
+      if (!mounted || !_isReading) return;
+      if (_reads.any((r) => r.epc == epc)) return;
+
+      final readAt = _formatNow();
       final entry = TagLedgerCache.instance.lookup(epc);
       if (entry != null) {
         final productName = ProductCache.instance.getNameFromMemory(entry.productCode?.toString() ?? '') ?? '商品不明';
-        if (!mounted) return;
         setState(() {
-          if (idx < _reads.length) {
-            final cur = _reads[idx];
-            _reads[idx] = _TagReadItem(
-              epc: cur.epc,
-              productName: productName,
-              status: '不明',
-              readAt: cur.readAt,
-              productCode: entry.productCode,
-              number: entry.number,
-            );
-          }
+          _reads.add(_TagReadItem(
+            epc: epc,
+            productName: productName,
+            status: '不明',
+            readAt: readAt,
+            productCode: entry.productCode,
+            number: entry.number,
+            fromCache: true,
+          ));
         });
         return;
       }
 
-      // Android では API を呼ばず「商品不明」で確定
-      if (!kUseApi) {
-        if (!mounted) return;
-        setState(() {
-          if (idx < _reads.length) {
-            final cur = _reads[idx];
-            _reads[idx] = _TagReadItem(
-              epc: cur.epc,
-              productName: '商品不明',
-              status: cur.status,
-              readAt: cur.readAt,
-              productCode: cur.productCode,
-              number: cur.number,
-            );
-          }
-        });
-        return;
-      }
-
-      final api = ApiClient(baseUrl: kApiBaseUrl);
-      api.fetchProduct(epc).then((p) {
-        if (!mounted) return;
-        if (p == null) {
-          setState(() {
-            if (idx < _reads.length) {
-              final cur = _reads[idx];
-              _reads[idx] = _TagReadItem(
-                epc: cur.epc,
-                productName: '商品不明',
-                status: cur.status,
-                readAt: cur.readAt,
-                productCode: cur.productCode,
-                number: cur.number,
-              );
-            }
-          });
-          return;
-        }
-        setState(() {
-          if (idx < _reads.length) {
-            final cur = _reads[idx];
-            _reads[idx] = _TagReadItem(
-              epc: cur.epc,
-              productName: p.productName.isEmpty ? '商品不明' : p.productName,
-              status: p.status.isEmpty ? '不明' : p.status,
-              readAt: cur.readAt,
-              productCode: p.productCode,
-              number: p.number,
-            );
-          }
-        });
-      }).catchError((_) {});
+      // キャッシュ未ヒット: 「商品不明」で確定。API 利用時は右端「DB確認」で照会
+      setState(() {
+        _reads.add(_TagReadItem(
+          epc: epc,
+          productName: '商品不明',
+          status: '不明',
+          readAt: readAt,
+          needsDbLookup: kUseApi,
+        ));
+      });
     });
 
     final ok = await _reader.startInventory(
@@ -325,16 +357,32 @@ class _TagListScreenState extends State<TagListScreen> {
     super.dispose();
   }
 
-  void _toggleSelect(int index) {
-    if (kIsProductionDb) return; // 本番では送信選択不可
+  void _toggleStatusSelect(int index) {
+    if (kIsProductionDb) return;
     setState(() {
-      if (_selectedForSend.contains(index)) {
-        _selectedForSend.remove(index);
+      if (_selectedForStatus.contains(index)) {
+        _selectedForStatus.remove(index);
       } else {
-        _selectedForSend.add(index);
+        _selectedForStatus.add(index);
       }
     });
   }
+
+  void _toggleSelectAll() {
+    if (kIsProductionDb) return;
+    setState(() {
+      if (_selectedForStatus.length == _reads.length) {
+        _selectedForStatus.clear();
+      } else {
+        _selectedForStatus
+          ..clear()
+          ..addAll(List.generate(_reads.length, (i) => i));
+      }
+    });
+  }
+
+  bool get _allStatusSelected =>
+      _reads.isNotEmpty && _selectedForStatus.length == _reads.length;
 
   void _showStatusDialog(BuildContext context, int index) {
     if (kIsProductionDb) {
@@ -345,6 +393,8 @@ class _TagListScreenState extends State<TagListScreen> {
       );
       return;
     }
+    final bulkApply =
+        _selectedForStatus.contains(index) && _selectedForStatus.length > 1;
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -384,11 +434,13 @@ class _TagListScreenState extends State<TagListScreen> {
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          const Padding(
-                            padding: EdgeInsets.fromLTRB(20, 20, 20, 8),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
                             child: Text(
-                              'ステータスを選択',
-                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                              bulkApply
+                                  ? 'ステータスを選択（チェック ${_selectedForStatus.length} 件すべてに適用）'
+                                  : 'ステータスを選択',
+                              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                             ),
                           ),
                           ConstrainedBox(
@@ -405,8 +457,15 @@ class _TagListScreenState extends State<TagListScreen> {
                                         child: OutlinedButton(
                                           onPressed: () {
                                             setState(() {
-                                              _statusOverrides[index] = status;
-                                              _selectedForSend.add(index);
+                                              final targets = _selectedForStatus.contains(index)
+                                                  ? Set<int>.from(_selectedForStatus)
+                                                  : {index};
+                                              for (final i in targets) {
+                                                if (i < _reads.length) {
+                                                  _statusOverrides[i] = status;
+                                                  _selectedForSend.add(i);
+                                                }
+                                              }
                                             });
                                             Navigator.pop(ctx);
                                           },
@@ -439,11 +498,17 @@ class _TagListScreenState extends State<TagListScreen> {
 
   Future<void> _sendSelected() async {
     final toSend = Set<int>.from(_selectedForSend);
-    if (toSend.isEmpty) return;
+    if (toSend.isEmpty || _isSending) return;
     if (!kUseApi) {
       showAppNotification(context, 'Androidでは送信できません。API接続時（Windowsなど）のみ送信可能です。');
       return;
     }
+
+    setState(() {
+      _isSending = true;
+      _sendCompleted = 0;
+      _sendTotal = toSend.length;
+    });
 
     final api = ApiClient(baseUrl: kApiBaseUrl);
     final userId = await EmployeeStorage.getCode();
@@ -452,36 +517,49 @@ class _TagListScreenState extends State<TagListScreen> {
     int successCount = 0;
     String? errorMessage;
 
-    for (final index in toSend) {
-      if (index >= _reads.length) continue;
-      final tag = _reads[index];
-      final status = _effectiveStatus(index);
-      final request = ProductUpdateRequest(
-        epc: tag.epc,
-        readAt: tag.readAt,
-        changes: {'status': status},
-        userId: userId,
-        storageLocation: storageLocationCode,
-      );
-      try {
-        await api.submitProductUpdate(request);
-        successCount++;
-      } catch (e) {
-        errorMessage = e.toString();
-        break;
+    try {
+      for (final index in toSend) {
+        if (index >= _reads.length) continue;
+        final tag = _reads[index];
+        final status = _effectiveStatus(index);
+        final request = ProductUpdateRequest(
+          epc: tag.epc,
+          readAt: tag.readAt,
+          changes: {'status': status},
+          userId: userId,
+          storageLocation: storageLocationCode,
+        );
+        try {
+          await api.submitProductUpdate(request);
+          successCount++;
+          if (mounted) {
+            setState(() => _sendCompleted = successCount);
+          }
+        } catch (e) {
+          errorMessage = e.toString();
+          break;
+        }
+      }
+
+      if (!mounted) return;
+      if (errorMessage != null) {
+        showAppNotification(context, '送信エラー: $errorMessage');
+        return;
+      }
+      setState(() {
+        _sentIndices.addAll(toSend);
+        _selectedForSend.removeAll(toSend);
+      });
+      showAppNotification(context, '送信しました（$successCount 件）。DB を更新しました。');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSending = false;
+          _sendCompleted = 0;
+          _sendTotal = 0;
+        });
       }
     }
-
-    if (!mounted) return;
-    if (errorMessage != null) {
-      showAppNotification(context, '送信エラー: $errorMessage');
-      return;
-    }
-    setState(() {
-      _sentIndices.addAll(toSend);
-      _selectedForSend.removeAll(toSend);
-    });
-    showAppNotification(context, '送信しました（$successCount 件）。DB を更新しました。');
   }
 
   @override
@@ -496,7 +574,7 @@ class _TagListScreenState extends State<TagListScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _NavBar(
+                MainFlowNavBar(
                   showBackButton: widget.showBackButton,
                   title: 'ICタグ読取・更新',
                   onBack: () => Navigator.of(context).pop(),
@@ -514,20 +592,32 @@ class _TagListScreenState extends State<TagListScreen> {
                           style: ElevatedButton.styleFrom(
                             backgroundColor: _isReading ? AppDesign.stopButton : AppDesign.primaryButton,
                             foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
+                            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                             elevation: 0,
                           ),
-                          child: Text(_isReading ? '読取停止' : '読取開始'),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _isReading ? '読取停止' : '読取開始',
+                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _isReading ? '読取中…' : '停止中',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.white.withValues(alpha: 0.85),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _isReading ? '読取中…' : '停止中',
-                        style: const TextStyle(fontSize: 13, color: Color(0xFF666666)),
-                      ),
                       if (_reader.supportsNativeRfid) ...[
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 8),
                         Text(
                           HardwareTriggerModeStorage.describeForTagList(
                             _hwTriggerMode,
@@ -563,40 +653,98 @@ class _TagListScreenState extends State<TagListScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   color: AppDesign.pendingBarBackground,
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        kIsProductionDb
-                            ? '本番のため読み取り専用（送信不可）'
-                            : '送信待ち: $_pendingCount 件',
-                        style: const TextStyle(fontSize: 14, color: Color(0xFF8A7000)),
+                      Expanded(
+                        child: kIsProductionDb
+                            ? Text(
+                                '読込件数: ${_reads.length} 件  本番のため読み取り専用（送信不可）',
+                                style: const TextStyle(fontSize: 14, color: Color(0xFF8A7000)),
+                              )
+                            : Row(
+                                children: [
+                                  Text(
+                                    '読込件数: ${_reads.length} 件',
+                                    style: const TextStyle(fontSize: 14, color: Color(0xFF8A7000)),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: Text(
+                                      _isSending
+                                          ? '送信中… $_sendCompleted / $_sendTotal 件'
+                                          : '送信待ち: $_pendingCount 件',
+                                      style: const TextStyle(fontSize: 14, color: Color(0xFF8A7000)),
+                                    ),
+                                  ),
+                                ],
+                              ),
                       ),
+                      const SizedBox(width: 8),
                       ElevatedButton(
-                        onPressed: (!kIsProductionDb && _pendingCount > 0) ? _sendSelected : null,
+                        onPressed: (!_isSending && !kIsProductionDb && _pendingCount > 0)
+                            ? _sendSelected
+                            : null,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppDesign.sendButton,
                           foregroundColor: Colors.white,
+                          disabledBackgroundColor: AppDesign.sendButton.withValues(alpha: 0.55),
+                          disabledForegroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                           elevation: 0,
                         ),
-                        child: Text(
-                          kIsProductionDb ? '送信（無効）' : '送信',
-                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                        ),
+                        child: _isSending
+                            ? Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white.withValues(alpha: 0.9),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  const Text(
+                                    '送信中…',
+                                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                                  ),
+                                ],
+                              )
+                            : Text(
+                                kIsProductionDb ? '送信（無効）' : '送信',
+                                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                              ),
                       ),
                     ],
                   ),
                 ),
-                // 一覧ヘッダー
-                // Container(
-                //   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                //   color: AppDesign.navBarBackground,
-                //   child: const Text(
-                //     'タグ一覧（ダブルタップ: 送信選択 / 長押し・右クリック: ステータス変更）',
-                //     style: TextStyle(fontSize: 12, color: Color(0xFF666666)),
-                //   ),
-                // ),
+                // 一覧ヘッダー（全選択）
+                if (_reads.isNotEmpty && !kIsProductionDb)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: const BoxDecoration(
+                      color: AppDesign.navBarBackground,
+                      border: Border(bottom: BorderSide(color: Color(0xFFEEEEEE))),
+                    ),
+                    child: Row(
+                      children: [
+                        TextButton(
+                          onPressed: _toggleSelectAll,
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppDesign.primaryLink,
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: Text(
+                            _allStatusSelected ? '全解除' : '全選択',
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 // タグ一覧
                 Expanded(
                   child: Container(
@@ -629,93 +777,151 @@ class _TagListScreenState extends State<TagListScreen> {
                             height: 1,
                             thickness: 1,
                             color: Color(0xFF9E9E9E),
-                            indent: 16,
+                            indent: 52,
                             endIndent: 16,
                           ),
                           itemBuilder: (context, index) {
                             final tag = _reads[index];
                             final productName = tag.productName;
-                            final isSelected = _selectedForSend.contains(index);
                             final isSent = _sentIndices.contains(index);
+                            final isStatusSelected = _selectedForStatus.contains(index);
+                            final isPendingSend =
+                                _selectedForSend.contains(index) && !isSent;
                             final statusLabel = _effectiveStatus(index);
                             final statusStyle = _statusStyleFromLabel(statusLabel);
+                            final showStatusBadge = statusLabel != '不明';
+                            final canSelect = !kIsProductionDb;
 
                             return Material(
-                              color: isSelected ? AppDesign.selectedForSendBackground : Colors.white,
-                              child: GestureDetector(
-                                onDoubleTap: () => _toggleSelect(index),
+                              color: isPendingSend
+                                  ? AppDesign.selectedForSendBackground
+                                  : Colors.white,
+                              child: InkWell(
                                 onLongPress: () => _showStatusDialog(context, index),
                                 onSecondaryTapDown: (_) => _showStatusDialog(context, index),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                                  decoration: BoxDecoration(
-                                    border: Border(
-                                      left: BorderSide(
-                                        color: isSelected ? AppDesign.selectedBorder : Colors.transparent,
-                                        width: 4,
-                                      ),
-                                    ),
-                                  ),
-                                  child: Column(
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(12, 14, 16, 14),
+                                  child: Row(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      // EPC は画面に表示しない（スペースを商品コード・番号・ステータスに割り当てる）
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: Text(
-                                              [
-                                                if (tag.productCode != null) '商品コード: ${tag.productCode}',
-                                                if (tag.productCode != null && tag.number != null) '  ',
-                                                if (tag.number != null) '番号: ${tag.number}',
-                                              ].join(),
-                                              style: const TextStyle(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.w600,
-                                                color: Color(0xFF455A64),
-                                              ),
-                                            ),
+                                      if (canSelect)
+                                        SizedBox(
+                                          width: 24,
+                                          height: 24,
+                                          child: Checkbox(
+                                            value: isStatusSelected,
+                                            onChanged: (_) => _toggleStatusSelect(index),
+                                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                            visualDensity: VisualDensity.compact,
                                           ),
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                            decoration: BoxDecoration(
-                                              color: statusStyle.bg,
-                                              borderRadius: BorderRadius.circular(6),
+                                        )
+                                      else
+                                        const SizedBox(width: 24),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: InkWell(
+                                          onTap: canSelect ? () => _toggleStatusSelect(index) : null,
+                                          child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                Expanded(
+                                                  child: Text(
+                                                    [
+                                                      if (tag.productCode != null) '商品コード: ${tag.productCode}',
+                                                      if (tag.productCode != null && tag.number != null) '  ',
+                                                      if (tag.number != null) '番号: ${tag.number}',
+                                                    ].join(),
+                                                    style: const TextStyle(
+                                                      fontSize: 16,
+                                                      fontWeight: FontWeight.w600,
+                                                      color: Color(0xFF455A64),
+                                                    ),
+                                                  ),
+                                                ),
+                                                if (showStatusBadge)
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                                    decoration: BoxDecoration(
+                                                      color: statusStyle.bg,
+                                                      borderRadius: BorderRadius.circular(6),
+                                                    ),
+                                                    child: Text(
+                                                      statusLabel,
+                                                      style: TextStyle(
+                                                        fontSize: 12,
+                                                        fontWeight: FontWeight.w500,
+                                                        color: statusStyle.fg,
+                                                      ),
+                                                    ),
+                                                  ),
+                                              ],
                                             ),
-                                            child: Text(
-                                              statusLabel,
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w500,
-                                                color: statusStyle.fg,
-                                              ),
+                                            const SizedBox(height: 6),
+                                            Row(
+                                              children: [
+                                                Expanded(
+                                                  child: Text(
+                                                    productName,
+                                                    style: const TextStyle(
+                                                      fontSize: 16,
+                                                      fontWeight: FontWeight.w500,
+                                                      color: Colors.black,
+                                                    ),
+                                                  ),
+                                                ),
+                                                if (isSent)
+                                                  const Padding(
+                                                    padding: EdgeInsets.only(right: 4),
+                                                    child: Text(
+                                                      '送信済み',
+                                                      style: TextStyle(
+                                                        fontSize: 11,
+                                                        fontWeight: FontWeight.w600,
+                                                        color: AppDesign.statusOk,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                if (kUseApi) ...[
+                                                  if (_dbQuerying.contains(index))
+                                                    const Padding(
+                                                      padding: EdgeInsets.only(left: 4),
+                                                      child: SizedBox(
+                                                        width: 16,
+                                                        height: 16,
+                                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                                      ),
+                                                    )
+                                                  else if (_dbActionLabel(tag) != null)
+                                                    OutlinedButton(
+                                                      onPressed: () => _queryProductFromDb(index),
+                                                      style: OutlinedButton.styleFrom(
+                                                        foregroundColor: AppDesign.primaryLink,
+                                                        side: const BorderSide(color: AppDesign.primaryLink),
+                                                        backgroundColor: const Color(0xFFEAF3FF),
+                                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                                        minimumSize: const Size(0, 32),
+                                                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                                        visualDensity: VisualDensity.compact,
+                                                        shape: RoundedRectangleBorder(
+                                                          borderRadius: BorderRadius.circular(8),
+                                                        ),
+                                                      ),
+                                                      child: Text(
+                                                        _dbActionLabel(tag)!,
+                                                        style: const TextStyle(
+                                                          fontSize: 12,
+                                                          fontWeight: FontWeight.w600,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                ],
+                                              ],
                                             ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 6),
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: Text(
-                                              productName,
-                                              style: const TextStyle(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.w500,
-                                                color: Colors.black,
-                                              ),
-                                            ),
-                                          ),
-                                          if (isSent)
-                                            const Text(
-                                              '送信済み',
-                                              style: TextStyle(
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.w600,
-                                                color: AppDesign.statusOk,
-                                              ),
-                                            ),
-                                        ],
+                                          ],
+                                        ),
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -763,61 +969,20 @@ class _TagListScreenState extends State<TagListScreen> {
         return (fg: AppDesign.statusRepair, bg: AppDesign.statusRepairBg);
       case '廃棄':
         return (fg: AppDesign.statusDisposed, bg: AppDesign.statusDisposedBg);
+      case 'データなし':
+        return (fg: AppDesign.statusDisposed, bg: AppDesign.statusDisposedBg);
       case '不明':
         return (fg: AppDesign.statusUnknown, bg: AppDesign.statusUnknownBg);
       default:
         return (fg: AppDesign.statusOk, bg: AppDesign.statusOkBg);
     }
   }
-}
 
-class _NavBar extends StatelessWidget {
-  const _NavBar({
-    required this.showBackButton,
-    required this.title,
-    required this.onBack,
-  });
-
-  final bool showBackButton;
-  final String title;
-  final VoidCallback onBack;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(
-        color: AppDesign.navBarBackground,
-        border: Border(bottom: BorderSide(color: AppDesign.navBarBorder, width: 1)),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Row(
-          children: [
-            if (showBackButton)
-              TextButton(
-                onPressed: onBack,
-                style: TextButton.styleFrom(
-                  foregroundColor: AppDesign.primaryLink,
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: const Text('← メイン', style: TextStyle(fontSize: 16)),
-              )
-            else
-              const SizedBox(width: 60),
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.black),
-                textAlign: TextAlign.center,
-              ),
-            ),
-            const SizedBox(width: 60),
-          ],
-        ),
-      ),
-    );
+  /// 行右端の DB 操作ラベル。null ならボタン非表示。
+  String? _dbActionLabel(_TagReadItem tag) {
+    if (tag.needsDbLookup) return 'DB確認';
+    if (tag.fromCache && !tag.statusFromDb) return '状態を見る';
+    if (tag.statusFromDb) return '再取得';
+    return null;
   }
 }

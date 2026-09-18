@@ -31,7 +31,7 @@ class TagReaderService {
 
   bool get isAndroid => Platform.isAndroid;
 
-  /// Android / iOS 実機の TSS RFID ネイティブブリッジが有効なとき true（Windows 等はモック）。
+  /// Android / iOS 実機の TSS RFID ネイティブブリッジが有効なとき true（Windows 等デスクトップは false）。
   bool get supportsNativeRfid => Platform.isAndroid || Platform.isIOS;
 
   Stream<Map<String, dynamic>> get events {
@@ -46,6 +46,7 @@ class TagReaderService {
   }
 
   /// R-5000: trigger_changed, SR7: scan_trigger_changed をマージしたトリガー押下/離しのストリーム。
+  /// SDK 仕様どおり「押下 true / 離し false」（TSS リファレンス: true でトリガ ON）。
   /// ネイティブRFID未対応のプラットフォームでは空ストリーム。
   Stream<bool> get triggerStream {
     if (!supportsNativeRfid) return Stream<bool>.empty();
@@ -71,7 +72,9 @@ class TagReaderService {
     return devices;
   }
 
-  /// 一覧から削除。iOS はアプリ保存の接続候補を削除。Android は OS ペアリングは残しアプリ上のみ非表示。
+  /// 一覧から削除。
+  /// Android は OS ペアリング解除＋アプリ側の保存データもクリア。
+  /// iOS は（現時点）アプリ保存の接続候補を削除（OS アンペアは未対応）。
   Future<bool> removeBondedDeviceFromList({required String address}) async {
     if (!supportsNativeRfid) return false;
     final ok = await _method.invokeMethod<bool>('removeBondedDevice', {
@@ -114,15 +117,20 @@ class TagReaderService {
     bool noRepeat = true,
   }) async {
     if (!supportsNativeRfid) return false;
-    final ok = await _method.invokeMethod<bool>('startInventory', {
-      'dateTime': dateTime,
-      'radioPower': radioPower,
-      'channel': channel,
-      'temp': temp,
-      'phase': phase,
-      'noRepeat': noRepeat,
-    });
-    return ok ?? false;
+    try {
+      final ok = await _method.invokeMethod<bool>('startInventory', {
+        'dateTime': dateTime,
+        'radioPower': radioPower,
+        'channel': channel,
+        'temp': temp,
+        'phase': phase,
+        'noRepeat': noRepeat,
+      });
+      return ok ?? false;
+    } on PlatformException {
+      // Android/iOS は失敗時に inventory_failed 等を返す。呼び出し側は bool のまま扱えるようにする。
+      return false;
+    }
   }
 
   Future<bool> stopInventory() async {
@@ -160,6 +168,48 @@ class TagReaderService {
       'decreaseDecibel': decreaseDecibel,
     });
     return ok ?? false;
+  }
+
+  /// 物理タグの EPC（UII）を書き換える。
+  /// 成功時 true。タイムアウト時は false（リーダー側は stop する）。
+  Future<bool> writeEpc({
+    required String currentEpc,
+    required String newEpc,
+    bool useMask = false,
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    if (!supportsNativeRfid) return false;
+    final current = currentEpc.trim().toLowerCase();
+    final next = newEpc.trim().toLowerCase();
+    if (current.isEmpty || next.isEmpty) return false;
+
+    final completer = Completer<bool>();
+    late final StreamSubscription<Map<String, dynamic>> sub;
+    sub = events.listen((e) {
+      final type = e['type'] as String?;
+      if (type == 'write_tag_data') {
+        if (!completer.isCompleted) completer.complete(true);
+      } else if (type == 'write_tag_failed') {
+        if (!completer.isCompleted) completer.complete(false);
+      }
+    });
+
+    try {
+      final started = await _method.invokeMethod<bool>('writeTag', {
+        'currentEpc': current,
+        'newEpc': next,
+        'useMask': useMask,
+      });
+      if (started != true) return false;
+      return await completer.future.timeout(timeout, onTimeout: () => false);
+    } on PlatformException {
+      return false;
+    } finally {
+      await sub.cancel();
+      try {
+        await stopInventory();
+      } catch (_) {}
+    }
   }
 }
 

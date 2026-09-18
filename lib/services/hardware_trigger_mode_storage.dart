@@ -1,5 +1,8 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'connected_device_storage.dart';
+import 'reader_family.dart';
+
 const String _keyMode = 'hardware_trigger_mode';
 const String _keyTimedSeconds = 'hardware_trigger_timed_seconds';
 
@@ -32,9 +35,26 @@ extension HardwareTriggerModeLabel on HardwareTriggerMode {
 class HardwareTriggerModeStorage {
   HardwareTriggerModeStorage._();
 
-  static const int timedSecondsMin = 1;
-  static const int timedSecondsMax = 60;
-  static const int timedSecondsDefault = 5;
+  static const double timedSecondsMin = 0.1;
+  static const double timedSecondsMax = 10.0;
+  static const double timedSecondsDefault = 1.5;
+  static const double timedSecondsStep = 0.1;
+
+  /// 0.1 秒刻みに丸める（スライダー・ステッパー共通）
+  static double snapToStep(double seconds) {
+    final steps = ((seconds - timedSecondsMin) / timedSecondsStep).round();
+    return (timedSecondsMin + steps * timedSecondsStep)
+        .clamp(timedSecondsMin, timedSecondsMax);
+  }
+
+  /// 表示用（整数秒なら小数なし、それ以外は 1 桁）
+  static String formatTimedSeconds(double seconds) {
+    final snapped = snapToStep(seconds);
+    if ((snapped * 10).round() % 10 == 0) {
+      return snapped.toInt().toString();
+    }
+    return snapped.toStringAsFixed(1);
+  }
 
   static Future<HardwareTriggerMode> getMode() async {
     final prefs = await SharedPreferences.getInstance();
@@ -51,30 +71,50 @@ class HardwareTriggerModeStorage {
     await prefs.setString(_keyMode, mode.name);
   }
 
-  static Future<int> getTimedSeconds() async {
+  static Future<double> getTimedSeconds() async {
     final prefs = await SharedPreferences.getInstance();
-    final v = prefs.getInt(_keyTimedSeconds);
-    if (v == null) return timedSecondsDefault;
-    return v.clamp(timedSecondsMin, timedSecondsMax);
+    // getInt/getDouble は型が違うと例外になるため、生の値で判定する。
+    // 現行は double、旧バージョンは int の可能性がある。
+    final raw = prefs.get(_keyTimedSeconds);
+    if (raw is double) {
+      return snapToStep(raw.clamp(timedSecondsMin, timedSecondsMax));
+    }
+    if (raw is int) {
+      final v = snapToStep(raw.toDouble().clamp(timedSecondsMin, timedSecondsMax));
+      await prefs.setDouble(_keyTimedSeconds, v);
+      return v;
+    }
+    return timedSecondsDefault;
   }
 
-  static Future<void> saveTimedSeconds(int seconds) async {
+  static Future<void> saveTimedSeconds(double seconds) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(
-      _keyTimedSeconds,
-      seconds.clamp(timedSecondsMin, timedSecondsMax),
-    );
+    await prefs.setDouble(_keyTimedSeconds, snapToStep(seconds));
+  }
+
+  /// 接続中が SR-7 かつ長押し式が保存されている場合、切替式へ強制変更する。
+  /// 変更を行ったとき true を返す。
+  static Future<bool> forceToggleIfSr7AndHold() async {
+    final currentMode = await getMode();
+    if (currentMode != HardwareTriggerMode.hold) return false;
+
+    final connectedName = await ConnectedDeviceStorage.getName();
+    final family = detectReaderFamilyFromName(connectedName);
+    if (family != ReaderFamily.sr7) return false;
+
+    await saveMode(HardwareTriggerMode.toggle);
+    return true;
   }
 
   /// ICタグ一覧などのヒント1行（実機トリガー用）
-  static String describeForTagList(HardwareTriggerMode mode, int timedSeconds) {
+  static String describeForTagList(HardwareTriggerMode mode, double timedSeconds) {
     switch (mode) {
       case HardwareTriggerMode.toggle:
         return 'リーダー本体トリガー: 1回押しで読取ON、もう1回でOFF';
       case HardwareTriggerMode.hold:
         return 'リーダー本体トリガー: 押している間だけ読取';
       case HardwareTriggerMode.timed:
-        return 'リーダー本体トリガー: 押すと読取開始、約$timedSeconds秒で自動停止（再押下で延長）';
+        return 'リーダー本体トリガー: 押すと読取開始、約${formatTimedSeconds(timedSeconds)}秒で自動停止（再押下で延長）';
     }
   }
 

@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_design.dart';
+import '../widgets/main_flow_nav_bar.dart';
 import 'employee_code_screen.dart';
+import 'epc_test_screen.dart';
 import 'hardware_trigger_settings_screen.dart';
 import 'radio_power_screen.dart';
 import 'storage_location_screen.dart';
+import 'tag_settings_screen.dart';
 
 /// 設定画面（担当者コード・保管場所・出力詳細設定への入口）
 class SettingsScreen extends StatelessWidget {
@@ -24,7 +27,7 @@ class SettingsScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _NavBar(
+                MainFlowNavBar(
                   showBackButton: showBackButton,
                   title: '設定',
                   onBack: () => Navigator.of(context).pop(),
@@ -87,67 +90,52 @@ class SettingsScreen extends StatelessWidget {
                           );
                         },
                       ),
+                      ListTile(
+                        leading: const Icon(Icons.sell, color: Color(0xFFE65100)),
+                        title: const Text('タグ設定'),
+                        subtitle: const Text('タグID再設定など'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (context) =>
+                                  const TagSettingsScreen(showBackButton: true),
+                            ),
+                          );
+                        },
+                      ),
+                      const Divider(height: 24),
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(16, 4, 16, 4),
+                        child: Text(
+                          '開発者向け',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF888888),
+                          ),
+                        ),
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.bug_report_outlined, color: Color(0xFF7B1FA2)),
+                        title: const Text('EPC読取テスト'),
+                        subtitle: const Text('タグEPCの読取・表示（テスト）'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (context) =>
+                                  const EpcTestScreen(showBackButton: true),
+                            ),
+                          );
+                        },
+                      ),
                     ],
                   ),
                 ),
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _NavBar extends StatelessWidget {
-  const _NavBar({
-    required this.showBackButton,
-    required this.title,
-    required this.onBack,
-  });
-
-  final bool showBackButton;
-  final String title;
-  final VoidCallback onBack;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(
-        color: AppDesign.navBarBackground,
-        border: Border(bottom: BorderSide(color: AppDesign.navBarBorder, width: 1)),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Row(
-          children: [
-            if (showBackButton)
-              TextButton(
-                onPressed: onBack,
-                style: TextButton.styleFrom(
-                  foregroundColor: AppDesign.primaryLink,
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: const Text('← メインに戻る', style: TextStyle(fontSize: 16)),
-              )
-            else
-              const SizedBox(width: 100),
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ),
-            const SizedBox(width: 100),
-          ],
         ),
       ),
     );

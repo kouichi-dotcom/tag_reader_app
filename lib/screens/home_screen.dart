@@ -12,63 +12,10 @@ import '../services/storage_location_storage.dart';
 import '../services/tag_ledger_cache.dart';
 import '../theme/app_design.dart';
 import 'device_connection_screen.dart';
+import 'zaicon_main_shell.dart';
 import 'settings_screen.dart';
 import 'slip_load_screen.dart';
 import 'tag_list_screen.dart';
-
-/// ホームのメニュー用正方形タイル（2×2）
-class _SquareMenuButton extends StatelessWidget {
-  const _SquareMenuButton({
-    required this.label,
-    required this.onPressed,
-    this.backgroundColor,
-    this.textColor,
-  });
-
-  final String label;
-  final VoidCallback? onPressed;
-  final Color? backgroundColor;
-  final Color? textColor;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = backgroundColor ?? AppDesign.primaryButton;
-    return AspectRatio(
-      aspectRatio: 1,
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.black, width: 1),
-        ),
-        child: Material(
-          color: color,
-          borderRadius: BorderRadius.circular(12),
-          child: InkWell(
-            onTap: onPressed,
-            borderRadius: BorderRadius.circular(12),
-            child: Padding(
-              padding: const EdgeInsets.all(8),
-              child: Center(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    height: 1.25,
-                    color: textColor ?? Colors.white,
-                  ),
-                  textAlign: TextAlign.center,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 enum _OutputMode { hand, near, mid, far }
 
@@ -99,6 +46,8 @@ extension on _OutputMode {
     }
   }
 
+  String get displayLabel => '$mainLabel$subLabel';
+
   /// ターゲットdBm目安（内部変換用）
   int get targetDbm {
     switch (this) {
@@ -114,8 +63,8 @@ extension on _OutputMode {
   }
 }
 
-/// メイン画面（design/index.html 準拠）
-/// タグリーダー接続・タグ読み取り・伝票一覧・従業員コード入力・設定への入口
+/// メイン画面
+/// 接続状態・作業メニュー・出力モード・設定への入口
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -133,7 +82,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
   final _reader = TagReaderService.instance;
 
+  /// UI上で選択中（未適用の可能性あり）
   _OutputMode _selectedOutputMode = _OutputMode.hand;
+
+  /// 実際に適用済みの値
+  _OutputMode _appliedOutputMode = _OutputMode.hand;
+
+  bool get _isReaderConnected =>
+      _connectedDeviceName != null && _connectedDeviceName!.isNotEmpty;
+
+  /// 実機で未接続のときだけ ICタグ作業を止める（Windows 等はシミュレート可のため常に有効）
+  bool get _canUseTagRead =>
+      !_reader.supportsNativeRfid || _isReaderConnected;
 
   Future<void> _loadEmployee() async {
     final name = await EmployeeStorage.getName();
@@ -191,10 +151,38 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     setState(() {
       _selectedOutputMode = mode;
+      _appliedOutputMode = mode;
     });
   }
 
   int _modeToTargetDbm(_OutputMode mode) => mode.targetDbm;
+
+  Future<void> _onApplyPressed() async {
+    final mode = _selectedOutputMode;
+    if (mode == _OutputMode.far && mode != _appliedOutputMode) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('遠距離に変更しますか？'),
+          content: const Text(
+            '出力を「遠距離」に変更します。\n周辺のタグも読み取る可能性があります。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('キャンセル'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('変更する'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+    await _applyOutputMode(mode);
+  }
 
   Future<void> _applyOutputMode(_OutputMode mode) async {
     final targetDbm = _modeToTargetDbm(mode);
@@ -219,17 +207,20 @@ class _HomeScreenState extends State<HomeScreen> {
     await RadioPowerStorage.saveDecreaseDecibel(decreaseDecibel);
 
     String message;
+    var appliedOk = true;
     if (_reader.supportsNativeRfid) {
       try {
         if (connected) {
           final ok = await _reader.setRadioPower(decreaseDecibel);
+          appliedOk = ok;
           message = ok
-              ? '出力モードを「${mode.mainLabel}${mode.subLabel}」に設定しました。'
+              ? '出力を「${mode.displayLabel}」に変更しました。'
               : '出力モードの反映に失敗しました（接続状態を確認してください）。';
         } else {
           message = '出力モードを保存しました。接続後に反映されます。';
         }
       } catch (e) {
+        appliedOk = false;
         message = '出力モードの反映に失敗しました: $e';
       }
     } else {
@@ -239,19 +230,276 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     setState(() {
       _selectedOutputMode = mode;
+      if (appliedOk) {
+        _appliedOutputMode = mode;
+      }
     });
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _openConnectionScreen() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => const DeviceConnectionScreen(showBackButton: true),
+      ),
+    );
+    await _loadConnectedDevice();
+    await _loadOutputMode();
+  }
+
+  Future<void> _openSettings() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => const SettingsScreen(showBackButton: true),
+      ),
+    );
+    if (!mounted) return;
+    await _loadEmployee();
+    await _loadStorageLocation();
+    await _loadOutputMode();
+  }
+
+  Widget _buildConnectionStatusCard() {
+    final supportsRfid = _reader.supportsNativeRfid;
+    final connected = _isReaderConnected;
+
+    if (!supportsRfid) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF5F5F5),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey.shade300, width: 1),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.computer, size: 22, color: Color(0xFF666666)),
+            SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'タグリーダー　この端末では非対応',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    'ICタグ読取はシミュレートで利用できます',
+                    style: TextStyle(fontSize: 12, color: Color(0xFF666666)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Material(
+      color: connected ? const Color(0xFFE8F5E9) : const Color(0xFFFFF3E0),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: _openConnectionScreen,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: connected ? const Color(0xFFA5D6A7) : const Color(0xFFFFCC80),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                connected ? Icons.bluetooth_connected : Icons.bluetooth_disabled,
+                size: 22,
+                color: connected ? const Color(0xFF2E7D32) : const Color(0xFFE65100),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      connected ? 'タグリーダー　接続済み' : 'タグリーダー　未接続',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: connected
+                            ? const Color(0xFF1B5E20)
+                            : const Color(0xFFE65100),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      connected ? _connectedDeviceName! : '接続してからICタグ読取を行えます',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF666666),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (!connected)
+                TextButton(
+                  onPressed: _openConnectionScreen,
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFFE65100),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text(
+                    '接続する',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                  ),
+                )
+              else
+                const Icon(Icons.chevron_right, color: Color(0xFF666666)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWorkAction({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback? onTap,
+    bool enabled = true,
+  }) {
+    final titleColor = enabled ? Colors.black : const Color(0xFF999999);
+    final subtitleColor = enabled ? const Color(0xFF666666) : const Color(0xFFAAAAAA);
+    return Material(
+      color: enabled ? Colors.white : const Color(0xFFF5F5F5),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.black, width: 1),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 28, color: titleColor),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: titleColor,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(fontSize: 12, color: subtitleColor, height: 1.3),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right,
+                color: enabled ? const Color(0xFF666666) : const Color(0xFFCCCCCC),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWorkSection() {
+    final canTag = _canUseTagRead;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          '作業',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w900,
+            color: Colors.black,
+          ),
+        ),
+        const SizedBox(height: 8),
+        _buildWorkAction(
+          icon: Icons.nfc,
+          title: 'ICタグを読み取る・更新する',
+          subtitle: canTag ? 'ICタグと商品を登録・変更' : 'リーダーを接続してください',
+          enabled: canTag,
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (context) => const TagListScreen(showBackButton: true),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 8),
+        _buildWorkAction(
+          icon: Icons.description_outlined,
+          title: '伝票を読み込む',
+          subtitle: '納品伝票の商品を読み込み',
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (context) => const SlipLoadScreen(showBackButton: true),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 8),
+        _buildWorkAction(
+          icon: Icons.inventory_2_outlined,
+          title: '在庫を見る',
+          subtitle: '現在の商品・タグを確認',
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (context) => const ZaiconMainShell(showBackButton: true),
+              ),
+            );
+          },
+        ),
+      ],
+    );
   }
 
   Widget _buildOutputModePicker() {
     const tileRadius = 10.0;
     const tilePadding = EdgeInsets.symmetric(horizontal: 10, vertical: 7);
     const tileBorderWidth = 1.0;
+    final hasPending = _selectedOutputMode != _appliedOutputMode;
 
-    Color tileBorderColor(_OutputMode m) => m == _selectedOutputMode
-        ? _outputTeal
-        : Colors.grey.shade300;
-    Color tileBg(_OutputMode m) => m == _selectedOutputMode ? _outputTealBg : Colors.white;
+    Color tileBorderColor(_OutputMode m) {
+      if (m == _selectedOutputMode) return _outputTeal;
+      return Colors.grey.shade300;
+    }
+
+    Color tileBg(_OutputMode m) =>
+        m == _selectedOutputMode ? _outputTealBg : Colors.white;
 
     Widget tile(_OutputMode m) {
       final selected = m == _selectedOutputMode;
@@ -275,7 +523,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Text(
                       m.mainLabel,
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w900,
                         color: Colors.black,
@@ -286,7 +534,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     Text(
                       m.subLabel,
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w900,
                         color: Colors.black,
@@ -313,7 +561,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Center(
                   child: Opacity(
                     opacity: selected ? 1 : 0,
-                    child: Icon(
+                    child: const Icon(
                       Icons.check,
                       size: 12,
                       color: Colors.white,
@@ -328,7 +576,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     return Container(
-      width: 280,
+      width: double.infinity,
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
         color: const Color(0xFFF5F5F5),
@@ -343,7 +591,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               const Expanded(
                 child: Text(
-                  '出力モード',
+                  'リーダー出力',
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w900,
@@ -352,9 +600,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               ElevatedButton(
-                onPressed: () => _applyOutputMode(_selectedOutputMode),
+                onPressed: _onApplyPressed,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: _outputTeal,
+                  backgroundColor: hasPending ? _outputTeal : Colors.grey.shade400,
                   foregroundColor: Colors.white,
                   elevation: 0,
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -372,7 +620,18 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 8),
+          Text(
+            hasPending
+                ? '現在：${_appliedOutputMode.displayLabel}　→　変更予定：${_selectedOutputMode.displayLabel}'
+                : '現在：${_appliedOutputMode.displayLabel}',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: hasPending ? _outputTeal : Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 8),
           GridView.count(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
@@ -430,8 +689,19 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
     });
-    // 台帳キャッシュ（assets の tag_ledger.json）を読み込み（開発時・APIなし時の照合用）
-    TagLedgerCache.instance.init();
+    // タグ台帳キャッシュ（案 A': その日の初回起動で全件再取得）
+    TagLedgerCache.instance.init().then((_) {
+      final api = ApiClient(baseUrl: kApiBaseUrl);
+      return TagLedgerCache.instance.ensureInitialLoaded(api);
+    }).then((ok) {
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('タグ台帳の取得に失敗しました。オンライン時に再試行します。'),
+          ),
+        );
+      }
+    });
   }
 
   @override
@@ -455,8 +725,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 _NavBar(
                   title: '大宮タグリーダーアプリ $kDbLabel',
                   employeeName: _employeeName,
-                  connectedDeviceName: _connectedDeviceName,
                   storageLocationName: _storageLocationName,
+                  onSettingsPressed: _openSettings,
                 ),
                 Expanded(
                   child: SafeArea(
@@ -464,90 +734,21 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: LayoutBuilder(
                       builder: (context, constraints) {
                         return SingleChildScrollView(
-                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
                           child: ConstrainedBox(
                             constraints: BoxConstraints(
-                              minHeight: constraints.maxHeight - 24,
+                              minHeight:
+                                  (constraints.maxHeight - 32).clamp(0.0, double.infinity),
                             ),
-                            child: Center(
-                              child: SizedBox(
-                                width: 280,
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    GridView.count(
-                                      shrinkWrap: true,
-                                      physics: const NeverScrollableScrollPhysics(),
-                                      crossAxisCount: 2,
-                                      mainAxisSpacing: 10,
-                                      crossAxisSpacing: 10,
-                                      childAspectRatio: 1,
-                                      children: [
-                                        _SquareMenuButton(
-                                          label: 'タグリーダー接続',
-                                          backgroundColor: const Color(0xFF90CAF9),
-                                          textColor: Colors.black,
-                                          onPressed: () async {
-                                            await Navigator.of(context).push(
-                                              MaterialPageRoute<void>(
-                                                builder: (context) =>
-                                                    const DeviceConnectionScreen(showBackButton: true),
-                                              ),
-                                            );
-                                            _loadConnectedDevice();
-                                          },
-                                        ),
-                                        _SquareMenuButton(
-                                          label: 'ICタグ読取・更新',
-                                          backgroundColor: const Color(0xFFCDE990),
-                                          textColor: Colors.black,
-                                          onPressed: () {
-                                            Navigator.of(context).push(
-                                              MaterialPageRoute<void>(
-                                                builder: (context) =>
-                                                    const TagListScreen(showBackButton: true),
-                                              ),
-                                            );
-                                          },
-                                        ),
-                                        _SquareMenuButton(
-                                          label: '設定',
-                                          backgroundColor: const Color(0xFFB2DFDB),
-                                          textColor: Colors.black,
-                                          onPressed: () async {
-                                            await Navigator.of(context).push(
-                                              MaterialPageRoute<void>(
-                                                builder: (context) =>
-                                                    const SettingsScreen(showBackButton: true),
-                                              ),
-                                            );
-                                            if (!mounted) return;
-                                            // 担当者コードは設定内で更新されるため、戻り時に名前を再読込
-                                            await _loadEmployee();
-                                            await _loadStorageLocation();
-                                            await _loadOutputMode();
-                                          },
-                                        ),
-                                        _SquareMenuButton(
-                                          label: '伝票読み込み',
-                                          backgroundColor: const Color(0xFFFCE4EC),
-                                          textColor: const Color(0xFFB71C1C),
-                                          onPressed: () {
-                                            Navigator.of(context).push(
-                                              MaterialPageRoute<void>(
-                                                builder: (context) =>
-                                                    const SlipLoadScreen(showBackButton: true),
-                                              ),
-                                            );
-                                          },
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 10),
-                                    _buildOutputModePicker(),
-                                  ],
-                                ),
-                              ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                _buildConnectionStatusCard(),
+                                const SizedBox(height: 16),
+                                _buildWorkSection(),
+                                const SizedBox(height: 16),
+                                _buildOutputModePicker(),
+                              ],
                             ),
                           ),
                         );
@@ -567,14 +768,14 @@ class _HomeScreenState extends State<HomeScreen> {
 class _NavBar extends StatelessWidget {
   const _NavBar({
     required this.title,
+    required this.onSettingsPressed,
     this.employeeName,
-    this.connectedDeviceName,
     this.storageLocationName,
   });
 
   final String title;
+  final VoidCallback onSettingsPressed;
   final String? employeeName;
-  final String? connectedDeviceName;
   final String? storageLocationName;
 
   @override
@@ -592,7 +793,7 @@ class _NavBar extends StatelessWidget {
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.fromLTRB(8, 12, 8, 12),
       decoration: const BoxDecoration(
         color: AppDesign.navBarBackground,
         border: Border(bottom: BorderSide(color: AppDesign.navBarBorder, width: 1)),
@@ -603,30 +804,38 @@ class _NavBar extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w600,
-                color: Colors.black,
-              ),
-              textAlign: TextAlign.center,
+            Row(
+              children: [
+                const SizedBox(width: 40),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                SizedBox(
+                  width: 40,
+                  height: 40,
+                  child: IconButton(
+                    onPressed: onSettingsPressed,
+                    tooltip: '設定',
+                    icon: const Icon(Icons.settings, color: Colors.black87),
+                    padding: EdgeInsets.zero,
+                  ),
+                ),
+              ],
             ),
             if (infoLine != null) ...[
               const SizedBox(height: 4),
               Text(
                 infoLine,
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: Color(0xFF666666),
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
-            if (connectedDeviceName != null && connectedDeviceName!.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(
-                '接続中: $connectedDeviceName',
                 style: const TextStyle(
                   fontSize: 13,
                   color: Color(0xFF666666),

@@ -1,0 +1,57 @@
+---
+description: アプリ/APIの起動コマンド。ユーザーが「起動して」と言ったらこの手順で実行する
+alwaysApply: true
+---
+
+# 起動コマンド（tag_reader_app / TagReaderApi）
+
+ユーザーが起動を頼んだら、説明だけで終わらせず **Shell で実際に起動**する。長時間プロセスは `block_until_ms: 0` でバックグラウンド起動し、必要なら別ターミナルで API とアプリを分ける。詳細ドキュメント: `docs/起動コマンド一覧.md`
+
+## パス
+
+- アプリ: `C:\dev\tag_reader_app`
+- API: `C:\dev\TagReaderApi`
+- API URL: `http://localhost:5262`
+
+## 4 パターンのコマンド
+
+| 対象 | コマンド |
+|------|----------|
+| アプリ Windows | `cd C:\dev\tag_reader_app; flutter run -d windows` |
+| アプリ 実機 | `cd C:\dev\tag_reader_app; flutter run -d A142`（または `flutter run -d 00067245O000580`）。先に `flutter devices` で接続確認可 |
+| API ローカルDB | `cd C:\dev\TagReaderApi; dotnet run --launch-profile http` |
+| API 本番DB | `cd C:\dev\TagReaderApi; dotnet run --launch-profile http-production` |
+
+## 言い方の解釈
+
+- 「Windows でローカルDBで起動」→ API(http) + `flutter run -d windows`
+- 「Windows で本番DBで起動」→ API(http-production) + `flutter run -d windows`
+- 「実機で…起動」→ API（指定の DB）+ Android 実機向け `flutter run`
+- 「API だけ」→ API のみ。DB 未指定ならローカル（http）
+
+## Azure デプロイ（API）
+
+「Azureにデプロイして」「Azureへデプロイして」「App Serviceにデプロイして」等 → API 側のデプロイスクリプトを実行:
+
+```powershell
+cd C:\dev\TagReaderApi; .\scripts\deploy-azure.ps1
+```
+
+詳細: `C:\dev\TagReaderApi\.cursor\rules\deploy-azure.mdc`
+
+## Android 実機実装（アプリ）
+
+「Androidに実装して」「実機に実装して」「実機に反映して」等 → **コード実装後**に `flutter clean` + `flutter run -d A142`:
+
+```powershell
+cd C:\dev\tag_reader_app; flutter clean
+cd C:\dev\tag_reader_app; flutter run -d A142
+```
+
+`flutter run` は `block_until_ms: 0` でバックグラウンド起動。詳細: `.cursor/rules/deploy-android.mdc`
+
+## 注意
+
+- 既に同じポート/プロセスが動いていれば二重起動しない（terminals を確認）
+- 本番DB起動時は書き込みに注意する旨を一言伝える
+- 接続確認: `GET http://localhost:5262/api/environment`

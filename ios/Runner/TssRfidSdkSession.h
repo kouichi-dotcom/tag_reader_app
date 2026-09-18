@@ -37,6 +37,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)setRadioPowerDecreaseDecibel:(NSInteger)decreaseDecibel
                             outError:(NSError *_Nullable *_Nullable)outError;
 
+/// 現在 EPC でマスクし、新 EPC をタグへ書き込む（singleTag + SelectMask）
+- (BOOL)writeEpcWithCurrentEpc:(NSString *)currentEpc
+                        newEpc:(NSString *)newEpc
+                      outError:(NSError *_Nullable *_Nullable)outError;
+
 /// UserDefaults + retrieveConnectedPeripherals をマージした bonded 風一覧
 - (NSArray<NSDictionary *> *)mergedKnownBondedStyleDevices;
 

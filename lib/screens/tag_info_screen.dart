@@ -7,6 +7,7 @@ import '../services/connected_device_storage.dart';
 import '../models/inventory_epc.dart';
 import '../services/tag_reader_service.dart';
 import '../theme/app_design.dart';
+import '../widgets/main_flow_nav_bar.dart';
 
 /// タグ情報表示（SDKで取得できる情報をできるだけ一覧表示する画面）
 ///
@@ -177,7 +178,7 @@ class _TagInfoScreenState extends State<TagInfoScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _NavBar(
+                MainFlowNavBar(
                   showBackButton: widget.showBackButton,
                   title: 'タグ情報表示',
                   onBack: () => Navigator.of(context).pop(),
@@ -336,57 +337,6 @@ class _TagInfoCard extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _NavBar extends StatelessWidget {
-  const _NavBar({
-    required this.showBackButton,
-    required this.title,
-    required this.onBack,
-  });
-
-  final bool showBackButton;
-  final String title;
-  final VoidCallback onBack;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(
-        color: AppDesign.navBarBackground,
-        border: Border(bottom: BorderSide(color: AppDesign.navBarBorder, width: 1)),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Row(
-          children: [
-            if (showBackButton)
-              TextButton(
-                onPressed: onBack,
-                style: TextButton.styleFrom(
-                  foregroundColor: AppDesign.primaryLink,
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: const Text('← メイン', style: TextStyle(fontSize: 16)),
-              )
-            else
-              const SizedBox(width: 60),
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.black),
-                textAlign: TextAlign.center,
-              ),
-            ),
-            const SizedBox(width: 60),
-          ],
-        ),
-      ),
     );
   }
 }

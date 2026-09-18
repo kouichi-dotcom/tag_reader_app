@@ -4,36 +4,69 @@ import 'package:http/http.dart' as http;
 
 import 'api_config_stub.dart' if (dart.library.io) 'api_config_io.dart' as _impl;
 
-/// true: ローカルAPI（＝ローカルDB）でテスト。false: 本番API（本番DB）。
-/// リリースビルド時は必ず false にすること。
-/// ローカルテスト手順: (1) この値を true のまま (2) TagReaderApi を「http」プロファイルで起動
-const bool kUseLocalApi = true;
+/// true: ローカル API（PC 上の TagReaderApi）。false: Azure 上の API。
+/// 実機で Azure × テスト DB を試すときは **false**。
+const bool kUseLocalApi = false;
+
+/// Azure App Service のベース URL（Hybrid Connection → この PC の SQL Server）。
+const String kAzureApiBaseUrl =
+    'https://ohmiyakoki-tagapp-api-aygbh8h5gsh4gwc0.japanwest-01.azurewebsites.net';
+
+/// Azure API がテスト DB に接続している間は true。
+/// API の `/api/environment` が `readOnly` を返すようになるまでの暫定（false にすると旧挙動）。
+const bool kAzureUsesTestDatabase = true;
 
 /// API のベース URL（開発・本番で切り替え）
-/// - ローカル API テスト: kUseLocalApi = true にすると _impl.getApiBaseUrl()（エミュレータ: 10.0.2.2:5262）
-/// - 実機で同じ PC の API を叩く: api_config_io で Platform 判定。要: API を 0.0.0.0 で待ち受け・ファイアウォール許可
-/// - Azure デプロイ先: https://tagreader-api-fqgkazd5frb7daa5.japanwest-01.azurewebsites.net
+/// - ローカル: kUseLocalApi = true → _impl.getApiBaseUrl()（エミュレータ: 10.0.2.2:5262）
+/// - Azure: kUseLocalApi = false → [kAzureApiBaseUrl]
 String get kApiBaseUrl =>
-    kUseLocalApi ? _impl.getApiBaseUrl() : 'https://tagreader-api-fqgkazd5frb7daa5.japanwest-01.azurewebsites.net';
+    kUseLocalApi ? _impl.getApiBaseUrl() : kAzureApiBaseUrl;
 
-/// Android / iOS 実機では false（台帳キャッシュ優先）。Windows などでは true（API 使用）。
-bool get kUseApi => _impl.useApi;
+/// モバイル実機でも API を呼ぶか。
+/// ローカル開発（assets モック優先）では Android/iOS は false。Azure 接続時は true。
+bool get kUseApi => kUseLocalApi ? _impl.useApi : true;
 
-/// API から取得した環境（Production = 本番DB）。未取得時は null。
-bool? _isProductionFromApi;
+/// API から取得した読み取り専用フラグ。未取得時は null。
+bool? _isReadOnlyFromApi;
+
+/// API から取得した DB 種別（Test / Production / Local 等）。未取得時は null。
+String? _databaseKindFromApi;
 
 bool _urlBasedIsProduction() {
   final u = kApiBaseUrl.toLowerCase();
   return !u.contains('localhost') && !u.contains('127.0.0.1') && !u.contains('10.0.2.2');
 }
 
-/// 本番DB接続時は true（読み取り専用）。API の /api/environment で取得した環境を優先し、未取得時は URL で判定。
-bool get kIsProductionDb => _isProductionFromApi ?? _urlBasedIsProduction();
+String _dbKindToLabel(String kind) {
+  switch (kind.toLowerCase()) {
+    case 'production':
+      return '本番DB';
+    case 'test':
+      return 'テストDB';
+    case 'local':
+      return 'ローカルDB';
+    default:
+      return kind;
+  }
+}
 
-/// ヘッダー表示用: 「(ローカルDB)」または「(本番DB)」
-String get kDbLabel => kIsProductionDb ? '(本番DB)' : '(ローカルDB)';
+/// 読み取り専用 DB 接続時は true。API の readOnly を優先し、未取得時は URL で判定。
+bool get kIsProductionDb {
+  if (_isReadOnlyFromApi != null) return _isReadOnlyFromApi!;
+  if (!kUseLocalApi && kAzureUsesTestDatabase) return false;
+  return _urlBasedIsProduction();
+}
 
-/// API の環境を取得してキャッシュ。起動時に呼ぶと、localhost でも本番プロファイルで動いている API なら (本番DB) になる。
+/// ヘッダー表示用: 「(テストDB)」「(本番DB)」「(ローカルDB)」など
+String get kDbLabel {
+  final kind = _databaseKindFromApi;
+  if (kind != null && kind.isNotEmpty) {
+    return '(${_dbKindToLabel(kind)})';
+  }
+  return kIsProductionDb ? '(本番DB)' : '(ローカルDB)';
+}
+
+/// API の環境を取得してキャッシュ。readOnly / databaseKind で書き込み可否とラベルを決める。
 /// Android / iOS 実機（kUseApi が false）ではスキップする。
 Future<void> fetchAndCacheApiEnvironment() async {
   if (!kUseApi) return;
@@ -46,10 +79,25 @@ Future<void> fetchAndCacheApiEnvironment() async {
     );
     if (response.statusCode != 200) return;
     final json = jsonDecode(response.body) as Map<String, dynamic>;
-    final env = json['environment'] as String?;
-    _isProductionFromApi = env == 'Production';
+    final readOnly = json['readOnly'] as bool?;
+    if (readOnly != null) {
+      _isReadOnlyFromApi = readOnly;
+    } else {
+      // 旧 API（environment のみ）との互換
+      final env = json['environment'] as String?;
+      if (!kUseLocalApi && kAzureUsesTestDatabase) {
+        _isReadOnlyFromApi = false;
+        _databaseKindFromApi ??= 'Test';
+      } else {
+        _isReadOnlyFromApi = env == 'Production';
+      }
+    }
+    final kind = json['databaseKind'] as String?;
+    if (kind != null && kind.isNotEmpty) {
+      _databaseKindFromApi = kind;
+    }
   } catch (_) {
-    // 取得失敗時は _isProductionFromApi を触らず URL 判定のまま
+    // 取得失敗時はキャッシュを触らず URL 判定のまま
   }
 }
 

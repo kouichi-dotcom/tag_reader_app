@@ -8,12 +8,17 @@ import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
 import '../models/employee.dart';
-import '../models/product.dart';
+import '../models/inventory_item.dart';
+import '../models/inventory_unit_row.dart';
 import '../models/product_by_epc.dart';
 import '../models/product_catalog_item.dart';
+import '../models/product_category.dart';
 import '../models/product_update_request.dart';
 import '../models/reception_slip.dart';
 import '../models/slip_list_filter.dart';
+import '../models/slip_tag_link_request.dart';
+import '../models/tag_ledger_item.dart';
+import '../models/tag_ledger_register.dart';
 
 /// リクエストが返らない場合のタイムアウト（接続不可で「取得中」のままになるのを防ぐ）
 const Duration _kRequestTimeout = Duration(seconds: 15);
@@ -77,6 +82,70 @@ class ApiClient {
     return ProductByEpc.fromJson(json);
   }
 
+  /// 在庫確認用（GET /api/products/inventory）。[商品台帳] と [ICタグ台帳] の集計。
+  /// [categoryId] で区分絞り込み、[query] で商品名・商品コードを部分一致検索。
+  Future<List<InventoryItem>> fetchInventory({int? categoryId, String? query}) async {
+    final params = <String, String>{};
+    if (categoryId != null) params['categoryId'] = categoryId.toString();
+    final q = query?.trim();
+    if (q != null && q.isNotEmpty) params['q'] = q;
+    final uri = Uri.parse('${_normalizedBase}api/products/inventory').replace(queryParameters: params.isEmpty ? null : params);
+    final response = await http.get(uri).timeout(
+      _kRequestTimeout,
+      onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('在庫取得エラー: ${response.statusCode} ${response.body}');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! List<dynamic>) {
+      throw Exception('在庫APIの形式が不正です');
+    }
+    return decoded
+        .map((e) => InventoryItem.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList();
+  }
+
+  /// 在庫確認の区分グリッド用（GET /api/products/categories）。[商品区分マスター]。
+  Future<List<ProductCategory>> fetchProductCategories() async {
+    final uri = Uri.parse('${_normalizedBase}api/products/categories');
+    final response = await http.get(uri).timeout(
+      _kRequestTimeout,
+      onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('商品区分取得エラー: ${response.statusCode} ${response.body}');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! List<dynamic>) {
+      throw Exception('商品区分APIの形式が不正です');
+    }
+    return decoded
+        .map((e) => ProductCategory.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList();
+  }
+
+  /// 在庫確認: 同一商品コードの個体一覧（GET /api/products/inventory/units?code=）
+  Future<List<InventoryUnitRow>> fetchInventoryUnits(int productCode) async {
+    final uri = Uri.parse('${_normalizedBase}api/products/inventory/units').replace(
+      queryParameters: {'code': productCode.toString()},
+    );
+    final response = await http.get(uri).timeout(
+      _kRequestTimeout,
+      onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('個体一覧取得エラー: ${response.statusCode} ${response.body}');
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! List<dynamic>) {
+      throw Exception('個体一覧APIの形式が不正です');
+    }
+    return decoded
+        .map((e) => InventoryUnitRow.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList();
+  }
+
   /// 商品台帳の現存商品一覧を一括取得（GET /api/products/catalog）。初回キャッシュ用。
   Future<List<ProductCatalogItem>> fetchProductCatalog() async {
     final uri = Uri.parse('${_normalizedBase}api/products/catalog');
@@ -88,6 +157,23 @@ class ApiClient {
     final list = jsonDecode(response.body) as List<dynamic>;
     return list
         .map((e) => ProductCatalogItem.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// ICタグ台帳の一括取得（GET /api/products/tag-ledger）。日次キャッシュ用（廃棄除外）。
+  Future<List<TagLedgerItem>> fetchTagLedger() async {
+    final uri = Uri.parse('${_normalizedBase}api/products/tag-ledger');
+    final response = await http.get(uri).timeout(
+      _kRequestTimeout,
+      onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('タグ台帳取得エラー: ${response.statusCode} ${response.body}');
+    }
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list
+        .map((e) => TagLedgerItem.fromJson(e as Map<String, dynamic>))
+        .where((e) => e.tagId2.isNotEmpty)
         .toList();
   }
 
@@ -146,8 +232,94 @@ class ApiClient {
     }
   }
 
+  /// 商品コードの次番号を取得（GET /api/products/tag-ledger/next-number）。
+  Future<int> fetchNextTagNumber(int productCode) async {
+    final uri = Uri.parse('${_normalizedBase}api/products/tag-ledger/next-number')
+        .replace(queryParameters: {'code': productCode.toString()});
+    final response = await http.get(uri).timeout(
+      _kRequestTimeout,
+      onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('次番号取得エラー: ${response.statusCode} ${response.body}');
+    }
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    return (json['nextNumber'] as num).toInt();
+  }
+
+  /// ICタグ台帳へ新規登録（POST /api/products/tag-ledger）。
+  Future<TagLedgerRegisterResult> registerTagLedger(TagLedgerRegisterRequest request) async {
+    if (kIsProductionDb) {
+      throw Exception('本番DBでは読み取り専用のため登録できません。');
+    }
+    final uri = Uri.parse('${_normalizedBase}api/products/tag-ledger');
+    final response = await http
+        .post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(request.toJson()),
+        )
+        .timeout(
+          _kRequestTimeout,
+          onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+        );
+    if (response.statusCode == 404) {
+      throw Exception('商品コードが見つかりません: ${response.body}');
+    }
+    if (response.statusCode == 409) {
+      String msg = '登録できません（重複または読み取り専用）';
+      try {
+        final map = jsonDecode(response.body) as Map<String, dynamic>;
+        final m = map['message'] as String?;
+        if (m != null && m.isNotEmpty) msg = m;
+      } catch (_) {}
+      throw Exception(msg);
+    }
+    if (response.statusCode >= 400) {
+      throw Exception('登録エラー: ${response.statusCode} ${response.body}');
+    }
+    final map = jsonDecode(response.body) as Map<String, dynamic>;
+    return TagLedgerRegisterResult.fromJson(map);
+  }
+
+  /// 受付伝票にタグを紐付けて送信（POST /api/reception-slips/{receptionNo}/link-tags）。
+  /// 用件に応じて [ICタグ台帳].tag_mode2 / [tag_table3].tag_mode・complete を更新する。
+  /// 配達・来店(納品)=納品、引取・来店(返品)=返品。用件「交換」のときは [SlipTagLinkRequest.linkMode] 必須。
+  /// 本番DB接続時は読み取り専用のため呼び出し不可。
+  Future<SlipTagLinkResult> submitSlipTagLinks({
+    required String receptionNo,
+    required SlipTagLinkRequest request,
+  }) async {
+    if (kIsProductionDb) {
+      throw Exception('本番DBでは読み取り専用のため更新できません。');
+    }
+    final encodedNo = Uri.encodeComponent(receptionNo.trim());
+    final uri = Uri.parse('${_normalizedBase}api/reception-slips/$encodedNo/link-tags');
+    final response = await http
+        .post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(request.toJson()),
+        )
+        .timeout(
+          _kRequestTimeout,
+          onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+        );
+    if (response.statusCode == 404) {
+      throw Exception('紐付け失敗（見つかりません）: ${response.body}');
+    }
+    if (response.statusCode == 409) {
+      throw Exception('読み取り専用のため紐付けできません。');
+    }
+    if (response.statusCode >= 400) {
+      throw Exception('紐付け送信エラー: ${response.statusCode} ${response.body}');
+    }
+    final map = jsonDecode(response.body) as Map<String, dynamic>;
+    return SlipTagLinkResult.fromJson(map);
+  }
+
   /// 受付台帳の伝票一覧を取得（GET /api/reception-slips）
-  /// [filter] 取得条件。省略時は全伝票（最新10件）。
+  /// [filter] 取得条件。省略時は全伝票（limit/offset でページング）。
   Future<List<ReceptionSlip>> fetchReceptionSlips({
     SlipListFilter filter = SlipListFilter.all,
   }) async {
@@ -167,6 +339,8 @@ class ApiClient {
     if (filter.subjectFilter != null && filter.subjectFilter!.isNotEmpty) {
       queryParams['subjects'] = filter.subjectFilter!.join(',');
     }
+    queryParams['limit'] = filter.limit.toString();
+    queryParams['offset'] = filter.offset.toString();
 
     final uri = Uri.parse('${_normalizedBase}api/reception-slips').replace(
       queryParameters: queryParams.isNotEmpty ? queryParams : null,

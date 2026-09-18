@@ -12,6 +12,9 @@
 
 ## ドキュメント
 
+- [起動コマンド一覧](docs/起動コマンド一覧.md) … Windows / 実機 / APIローカルDB / API本番DB の4パターン（Cursor からの起動依頼もここ準拠）
+- [Windowsでの起動方法](docs/Windowsでの起動方法.md) … `flutter run -d windows` と Android エミュレータ（Android画面をPC上に表示）の違い
+- [タグリーダー実機テスト手順](docs/タグリーダー実機テスト手順.md) … Android 実機での接続・読取確認
 - [ICタグ読取・更新 機能仕様書](docs/ICタグ読取・更新.md) … 画面・操作・DB連携・テスト機能の最新仕様
 - [API設計](docs/API設計.md) … 商品取得・ランダム取得・商品更新API の仕様
 - [iOS開発セットアップ](docs/iOS開発セットアップ.md) … Mac/Xcode・CocoaPods・TSS iOS SDK 配置・ビルド手順
@@ -25,8 +28,12 @@
 
 ```bash
 flutter pub get
-flutter run -d windows   # または対象デバイス
+flutter run -d windows   # Windows デスクトップウィンドウ
+# Android の画面を PC 上で見る場合はエミュレータ起動後:
+# flutter run -d android
 ```
+
+詳細は [Windowsでの起動方法](docs/Windowsでの起動方法.md) を参照。
 
 API のベース URL は `lib/config/api_config.dart` の `kApiBaseUrl` で指定。
 
@@ -52,6 +59,16 @@ cd C:\dev\tag_reader_app
 
 - Androidの設定で、タグリーダー（Bluetooth）を **事前にペアリング**しておく
 - 初回起動時にBluetooth権限の許可を求められたら許可する
+- **開発者向けオプション → USBデバッグ** を ON し、接続時の「許可」ダイアログも許可する  
+  （未許可だと `adb devices` が空になり、`flutter run` に Android が出ない）
+
+実機起動:
+
+```powershell
+flutter run -d android
+```
+
+詳細は [タグリーダー実機テスト手順](docs/タグリーダー実機テスト手順.md) を参照。
 
 ### 3) アプリでの確認手順（最短）
 

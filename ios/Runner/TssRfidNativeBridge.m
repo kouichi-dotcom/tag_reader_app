@@ -70,6 +70,12 @@ static void (^sEventCallback)(NSDictionary *event);
   return [[TssRfidSdkSession shared] setRadioPowerDecreaseDecibel:decreaseDecibel outError:outError];
 }
 
++ (BOOL)writeEpcWithCurrentEpc:(NSString *)currentEpc
+                        newEpc:(NSString *)newEpc
+                      outError:(NSError *__autoreleasing *)outError {
+  return [[TssRfidSdkSession shared] writeEpcWithCurrentEpc:currentEpc newEpc:newEpc outError:outError];
+}
+
 + (NSArray<NSDictionary *> *)knownBondedStyleDevices {
   return [[TssRfidSdkSession shared] mergedKnownBondedStyleDevices];
 }

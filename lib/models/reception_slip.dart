@@ -16,6 +16,7 @@ class ReceptionSlip {
     this.receptionAt,
     this.handlerCode,
     this.handlerName,
+    this.latLng,
     this.details = const [],
   });
 
@@ -34,6 +35,8 @@ class ReceptionSlip {
   final String? handlerCode;
   /// 処理者（担当者コード）に対応する担当者氏名
   final String? handlerName;
+  /// 現場台帳の緯度経度（例: "26.08774146098248,127.69902673891113"）
+  final String? latLng;
   final List<ReceptionDetailItem> details;
 
   /// 担当者表示用：担当者名があればそのまま、なければ「コード: X」または「--」
@@ -77,6 +80,7 @@ class ReceptionSlip {
           : null,
       handlerCode: _str(json, 'handlerCode', 'HandlerCode'),
       handlerName: _str(json, 'handlerName', 'HandlerName'),
+      latLng: _str(json, 'latLng', 'LatLng'),
       details: _parseDetails(json['details'] ?? json['Details']),
     );
   }

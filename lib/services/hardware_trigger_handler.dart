@@ -22,14 +22,23 @@ class HardwareTriggerHandler {
   Timer? _timedStopTimer;
 
   HardwareTriggerMode _mode = HardwareTriggerMode.toggle;
-  int _timedSeconds = HardwareTriggerModeStorage.timedSecondsDefault;
+  double _timedSeconds = HardwareTriggerModeStorage.timedSecondsDefault;
+
+  /// 押下→離しの順序を崩さないよう、トリガー処理を直列化する。
+  Future<void> _queue = Future<void>.value();
 
   /// SharedPreferences を読み、リスナを張り直す。
   Future<void> attach(TagReaderService reader) async {
     await cancelSubscriptionOnly();
+    await reloadSettings();
+    _sub = reader.triggerStream.listen(_onTrigger);
+  }
+
+  /// 設定画面から戻った直後など、モード／秒数だけ再読込する。
+  Future<void> reloadSettings() async {
+    await HardwareTriggerModeStorage.forceToggleIfSr7AndHold();
     _mode = await HardwareTriggerModeStorage.getMode();
     _timedSeconds = await HardwareTriggerModeStorage.getTimedSeconds();
-    _sub = reader.triggerStream.listen(_onTrigger);
   }
 
   /// 時間式の自動停止タイマーのみキャンセル（アプリの停止ボタンから読取を止めたときに呼ぶ）
@@ -44,9 +53,15 @@ class HardwareTriggerHandler {
     _sub = null;
     _timedStopTimer?.cancel();
     _timedStopTimer = null;
+    _queue = Future<void>.value();
   }
 
-  Future<void> _onTrigger(bool pressed) async {
+  void _onTrigger(bool pressed) {
+    // トリガー毎に prefs を await しない（長押しの押下/離しレース防止）
+    _queue = _queue.then((_) => _handleTrigger(pressed));
+  }
+
+  Future<void> _handleTrigger(bool pressed) async {
     if (!mounted()) return;
 
     switch (_mode) {
@@ -77,7 +92,9 @@ class HardwareTriggerHandler {
         }
         if (!mounted() || !isReading()) return;
 
-        _timedStopTimer = Timer(Duration(seconds: _timedSeconds), () async {
+        _timedStopTimer = Timer(
+          Duration(milliseconds: (_timedSeconds * 1000).round()),
+          () async {
           if (mounted() && isReading()) {
             await onStop();
           }

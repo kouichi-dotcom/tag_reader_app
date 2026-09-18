@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/storage_location_storage.dart';
 import '../theme/app_design.dart';
+import '../widgets/main_flow_nav_bar.dart';
 
 /// 保管場所の選択肢
 const List<String> _locationOptions = [
@@ -56,7 +57,7 @@ class _StorageLocationScreenState extends State<StorageLocationScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _NavBar(
+                MainFlowNavBar(
                   showBackButton: widget.showBackButton,
                   title: '保管場所選択',
                   onBack: () => Navigator.of(context).pop(),
@@ -168,57 +169,6 @@ class _LocationButton extends StatelessWidget {
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _NavBar extends StatelessWidget {
-  const _NavBar({
-    required this.showBackButton,
-    required this.title,
-    required this.onBack,
-  });
-
-  final bool showBackButton;
-  final String title;
-  final VoidCallback onBack;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(
-        color: AppDesign.navBarBackground,
-        border: Border(bottom: BorderSide(color: AppDesign.navBarBorder, width: 1)),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Row(
-          children: [
-            if (showBackButton)
-              TextButton(
-                onPressed: onBack,
-                style: TextButton.styleFrom(
-                  foregroundColor: AppDesign.primaryLink,
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: const Text('← メイン', style: TextStyle(fontSize: 16)),
-              )
-            else
-              const SizedBox(width: 60),
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.black),
-                textAlign: TextAlign.center,
-              ),
-            ),
-            const SizedBox(width: 60),
-          ],
         ),
       ),
     );

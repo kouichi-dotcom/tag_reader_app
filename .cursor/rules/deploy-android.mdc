@@ -1,0 +1,74 @@
+---
+description: Android 実機へフルビルドで実装・反映。「Androidに実装して」等の依頼でコード変更後に flutter clean + flutter run を実行する
+alwaysApply: true
+---
+
+# Android 実機実装（tag_reader_app）
+
+ユーザーが Android 実機への実装・反映を頼んだら、**コード変更を実装したあと**、ホットリロードでは足りない場合の手順として **Shell で実際にビルド・起動**する。
+
+## 言い方の解釈
+
+次のような依頼はすべてこの手順を指す:
+
+- 「Androidに実装して」「Androidへ実装して」
+- 「実機に実装して」「実機Androidに反映して」
+- 「実機にビルドして」「実機に入れて」
+- 「ホットリロードではなく実機に入れて」
+
+**通常の起動だけ**（コード変更なし、またはホットリロードで足りる）の依頼は対象外:
+
+- 「実機で起動して」「実機で起動」→ `flutter run -d A142` のみ（`startup.mdc`）
+- 「起動して」→ 文脈に応じて startup ルール
+
+## パス
+
+- アプリ: `C:\dev\tag_reader_app`
+- スクリプト: `C:\dev\tag_reader_app\scripts\run-android-device.ps1`
+- 実機デバイス ID: `A142`（見つからなければ `00067245O000580`）
+
+## 手順（実装 + 実機反映）
+
+1. 依頼内容どおり **ソースコードを実装・修正**する
+2. 必要なら `flutter pub get`
+3. フルビルドで実機へ反映:
+
+```powershell
+cd C:\dev\tag_reader_app; flutter clean
+```
+
+完了後、**別コマンドで** `flutter run` をバックグラウンド起動（`block_until_ms: 0`）:
+
+```powershell
+cd C:\dev\tag_reader_app; flutter run -d A142
+```
+
+またはスクリプトをまとめて使う場合（`flutter run` 部分はバックグラウンド）:
+
+```powershell
+cd C:\dev\tag_reader_app; .\scripts\run-android-device.ps1
+```
+
+## ホットリロードでは足りない変更
+
+次のような変更をしたときは **必ず flutter clean + flutter run** する:
+
+- `pubspec.yaml`（依存パッケージ・assets・アイコン）
+- `android/` 配下（`AndroidManifest.xml`、`MainActivity.kt`、ネイティブ連携）
+- `ios/` 配下のネイティブコード（実機が Android でも同様にフルビルド推奨）
+- Method Channel / プラグイン追加・更新
+- アプリアイコン・スプラッシュ
+- 生成コード（`build_runner` 等）の再生成が必要な変更
+
+軽微な Dart UI 変更だけならホットリロード（`r`）で足りることもあるが、**「Androidに実装して」と明示された場合は常にフルビルド**する。
+
+## 前提・注意
+
+- USB デバッグ ON・端末接続済みであること。失敗時は `flutter devices` で確認
+- 既に同じ端末向け `flutter run` が動いていれば、先に停止するか terminals を確認して二重起動しない
+- API も使うテストなら、別ターミナルで TagReaderApi を起動（`startup.mdc` 参照）
+- RFID / タグリーダー機能は実機でのみ検証可能
+
+## 修正のみでビルド不要な場合
+
+ユーザーが「コードだけ直して」「まだ実機には入れない」と言った場合は、フルビルドは実行しない。

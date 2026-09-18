@@ -8,32 +8,44 @@ import '../mocks/mock_data.dart';
 import '../models/inventory_epc.dart';
 import '../models/product_by_epc.dart';
 import '../models/reception_slip.dart';
+import '../models/slip_link_match.dart';
+import '../models/slip_tag_link_request.dart';
 import '../services/employee_cache.dart';
+import '../services/employee_storage.dart';
 import '../services/hardware_trigger_handler.dart';
 import '../services/hardware_trigger_mode_storage.dart';
 import '../services/product_cache.dart';
 import '../services/tag_ledger_cache.dart';
 import '../services/tag_reader_service.dart';
 import '../theme/app_design.dart';
+import '../widgets/app_notification.dart';
+import '../widgets/main_flow_nav_bar.dart';
+import '../widgets/reader_not_connected_dialog.dart';
 
 /// 伝票・商品紐付け画面（design/screen7 の link-overlay 準拠）
-/// 伝票詳細で「この伝票を選択」後に表示
+/// 伝票詳細で「この伝票を選択」／交換の「交換納品」「交換返品」後に表示
 class SlipLinkScreen extends StatefulWidget {
   const SlipLinkScreen({
     super.key,
     required this.slip,
     this.initialLinkedProducts,
+    this.linkMode,
   });
 
   final ReceptionSlip slip;
   /// すでに紐付け済みの商品（再表示時はチェック済みで一覧に表示）
   final List<MockLinkProduct>? initialLinkedProducts;
+  /// 用件「交換」時のモード（交換納品 / 交換返品）。通常用件は null。
+  final String? linkMode;
 
   @override
   State<SlipLinkScreen> createState() => _SlipLinkScreenState();
 }
 
 class _SlipLinkScreenState extends State<SlipLinkScreen> {
+  static const double _codeColumnWidth = 72;
+  static const double _numberColumnWidth = 56;
+
   final List<MockLinkProduct> _products = [];
   final Set<String> _selectedIds = {};
   int _readCounter = 0;
@@ -46,7 +58,7 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
   StreamSubscription<InventoryEpc>? _linkInvSub;
   HardwareTriggerHandler? _hwTriggerHandler;
   HardwareTriggerMode _hwTriggerMode = HardwareTriggerMode.toggle;
-  int _hwTimedSeconds = HardwareTriggerModeStorage.timedSecondsDefault;
+  double _hwTimedSeconds = HardwareTriggerModeStorage.timedSecondsDefault;
 
   @override
   void dispose() {
@@ -101,7 +113,7 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
           id: '${p.id}_${_products.length}',
           name: p.name,
           code: p.code,
-          status: p.status,
+          number: p.number,
         ));
       }
       _readCounter++;
@@ -132,9 +144,7 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
       return;
     }
     if (!okConn) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('タグリーダーが未接続です。先に「タグリーダー接続」で接続してください。')),
-      );
+      await showReaderNotConnectedDialog(context);
       return;
     }
 
@@ -157,7 +167,7 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
             id: epc,
             name: name,
             code: entry.productCode?.toString() ?? '--',
-            status: '不明',
+            number: entry.number,
           ));
         });
         return;
@@ -167,7 +177,7 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
       if (!kUseApi) {
         if (!mounted) return;
         setState(() {
-          _products.add(MockLinkProduct(id: epc, name: '商品不明', code: '--', status: '不明'));
+          _products.add(MockLinkProduct(id: epc, name: '商品不明', code: '--'));
         });
         return;
       }
@@ -178,11 +188,23 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
         p = await api.fetchProduct(epc);
       } catch (_) {}
       if (!mounted) return;
+      if (p != null) {
+        await TagLedgerCache.instance.put(
+          epc,
+          productCode: p.productCode,
+          number: p.number,
+        );
+      }
+      if (!mounted) return;
       final name = (p == null || p.productName.isEmpty) ? '商品不明' : p.productName;
       final code = p?.productCode?.toString() ?? '--';
-      final status = (p == null || p.status.isEmpty) ? '不明' : p.status;
       setState(() {
-        _products.add(MockLinkProduct(id: epc, name: name, code: code, status: status));
+        _products.add(MockLinkProduct(
+          id: epc,
+          name: name,
+          code: code,
+          number: p?.number,
+        ));
       });
     });
 
@@ -234,63 +256,28 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
 
   void _showConfirm() {
     final selected = _products.where((p) => _selectedIds.contains(p.id)).toList();
-    final slip = widget.slip;
-    final lines = <String>[
-      '伝票: ${slip.receptionNo}',
-      '会社名: ${slip.customerName}',
-      '',
-      ...selected.map((p) => '${p.name}（${p.code}）: ${p.status}'),
-    ];
-    if (selected.isEmpty) {
-      lines.add('選択された商品はありません。');
-    }
     showDialog<void>(
       context: context,
-      builder: (ctx) => Align(
-        alignment: Alignment.center,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: AppDesign.deviceWidth),
-          child: Material(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text(
-                    '紐付け内容の確認',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    lines.join('\n'),
-                    style: const TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.5),
-                  ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.pop(ctx);
-                        Navigator.pop(context, selected);
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppDesign.primaryButton,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                        elevation: 0,
-                      ),
-                      child: const Text('伝票一覧に戻る', style: TextStyle(fontSize: 16)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
+      barrierDismissible: false,
+      builder: (ctx) => _SlipLinkConfirmDialog(
+        slip: widget.slip,
+        linkMode: widget.linkMode,
+        selected: selected,
+        onRevise: () => Navigator.pop(ctx),
+        onSaveWithoutSend: () {
+          Navigator.pop(ctx);
+          Navigator.pop(
+            context,
+            SlipLinkPopResult(products: selected, submitted: false),
+          );
+        },
+        onSubmitted: () {
+          Navigator.pop(ctx);
+          Navigator.pop(
+            context,
+            SlipLinkPopResult(products: selected, submitted: true),
+          );
+        },
       ),
     );
   }
@@ -303,23 +290,90 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
         .join('・');
   }
 
-  ({Color fg, Color bg}) _statusStyle(String status) {
-    switch (status) {
-      case 'OK':
-        return (fg: AppDesign.statusOk, bg: AppDesign.statusOkBg);
-      case '貸出中':
-        return (fg: AppDesign.statusLent, bg: AppDesign.statusLentBg);
-      case '清掃中':
-        return (fg: AppDesign.statusCleaning, bg: AppDesign.statusCleaningBg);
-      case '整備中':
-        return (fg: AppDesign.statusMaintenance, bg: AppDesign.statusMaintenanceBg);
-      case '修理中':
-        return (fg: AppDesign.statusRepair, bg: AppDesign.statusRepairBg);
-      case '廃棄':
-        return (fg: AppDesign.statusDisposed, bg: AppDesign.statusDisposedBg);
-      default:
-        return (fg: AppDesign.statusUnknown, bg: AppDesign.statusUnknownBg);
-    }
+  Widget _productListColumnHeader() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Color(0xFFEEEEEE))),
+      ),
+      child: Row(
+        children: [
+          const SizedBox(width: 34),
+          const Expanded(
+            child: Text(
+              '商品名',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF666666)),
+            ),
+          ),
+          SizedBox(
+            width: _codeColumnWidth,
+            child: const Text(
+              '商品コード',
+              textAlign: TextAlign.right,
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF666666)),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: _numberColumnWidth,
+            child: const Text(
+              '番号',
+              textAlign: TextAlign.right,
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF666666)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _productListRow(MockLinkProduct p, bool selected) {
+    return Material(
+      color: selected ? AppDesign.selectedBackground : null,
+      child: InkWell(
+        onTap: () => _toggleProduct(p.id),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 22,
+                height: 22,
+                child: Checkbox(
+                  value: selected,
+                  onChanged: (_) => _toggleProduct(p.id),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  p.name,
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: Colors.black),
+                ),
+              ),
+              SizedBox(
+                width: _codeColumnWidth,
+                child: Text(
+                  p.code,
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(fontSize: 14, color: Color(0xFF555555), fontFamily: 'monospace'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: _numberColumnWidth,
+                child: Text(
+                  p.numberDisplay,
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(fontSize: 14, color: Color(0xFF555555), fontFamily: 'monospace'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -335,7 +389,13 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _LinkNavBar(onBack: () => Navigator.pop(context)),
+                MainFlowNavBar(
+                  showBackButton: true,
+                  title: widget.linkMode != null && widget.linkMode!.isNotEmpty
+                      ? '伝票・商品紐付け（${widget.linkMode}）'
+                      : '伝票・商品紐付け',
+                  onBack: () => Navigator.pop(context),
+                ),
                 Expanded(
                   child: SingleChildScrollView(
                     child: Column(
@@ -418,7 +478,8 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
                               ),
                             ),
                           )
-                        else
+                        else ...[
+                          _productListColumnHeader(),
                           ListView.builder(
                             shrinkWrap: true,
                             physics: const NeverScrollableScrollPhysics(),
@@ -426,54 +487,10 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
                             itemBuilder: (context, index) {
                               final p = _products[index];
                               final selected = _selectedIds.contains(p.id);
-                              final style = _statusStyle(p.status);
-                              return Material(
-                                color: selected ? AppDesign.selectedBackground : null,
-                                child: InkWell(
-                                  onTap: () => _toggleProduct(p.id),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                                    child: Row(
-                                      children: [
-                                        SizedBox(
-                                          width: 22,
-                                          height: 22,
-                                          child: Checkbox(
-                                            value: selected,
-                                            onChanged: (_) => _toggleProduct(p.id),
-                                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 12),
-                                        Expanded(
-                                          child: Text(
-                                            p.name,
-                                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: Colors.black),
-                                          ),
-                                        ),
-                                        Text(
-                                          p.code,
-                                          style: const TextStyle(fontSize: 14, color: Color(0xFF555555), fontFamily: 'monospace'),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: style.bg,
-                                            borderRadius: BorderRadius.circular(6),
-                                          ),
-                                          child: Text(
-                                            p.status,
-                                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: style.fg),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              );
+                              return _productListRow(p, selected);
                             },
                           ),
+                        ],
                       ],
                     ),
                   ),
@@ -506,48 +523,6 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _LinkNavBar extends StatelessWidget {
-  const _LinkNavBar({required this.onBack});
-
-  final VoidCallback onBack;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: const BoxDecoration(
-        color: AppDesign.navBarBackground,
-        border: Border(bottom: BorderSide(color: AppDesign.navBarBorder, width: 1)),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: Row(
-          children: [
-            TextButton(
-              onPressed: onBack,
-              style: TextButton.styleFrom(
-                foregroundColor: AppDesign.primaryLink,
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: const Text('← 戻る', style: TextStyle(fontSize: 16)),
-            ),
-            const Expanded(
-              child: Text(
-                '伝票・商品紐付け',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.black),
-                textAlign: TextAlign.center,
-              ),
-            ),
-            const SizedBox(width: 52),
-          ],
         ),
       ),
     );
@@ -600,6 +575,408 @@ class _InfoLine extends StatelessWidget {
             TextSpan(text: value),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// 紐付け内容の確認ダイアログ（過不足表示・送信）
+class _SlipLinkConfirmDialog extends StatefulWidget {
+  const _SlipLinkConfirmDialog({
+    required this.slip,
+    required this.selected,
+    required this.onRevise,
+    required this.onSaveWithoutSend,
+    required this.onSubmitted,
+    this.linkMode,
+  });
+
+  final ReceptionSlip slip;
+  final String? linkMode;
+  final List<MockLinkProduct> selected;
+  final VoidCallback onRevise;
+  final VoidCallback onSaveWithoutSend;
+  final VoidCallback onSubmitted;
+
+  @override
+  State<_SlipLinkConfirmDialog> createState() => _SlipLinkConfirmDialogState();
+}
+
+class _SlipLinkConfirmDialogState extends State<_SlipLinkConfirmDialog> {
+  bool _forceSendAck = false;
+  bool _sending = false;
+
+  late final SlipLinkMatch _match = SlipLinkMatch.analyze(
+    details: widget.slip.details,
+    linked: widget.selected,
+  );
+
+  bool get _canSend {
+    if (widget.selected.isEmpty || _sending) return false;
+    if (_match.isComplete) return true;
+    return _forceSendAck;
+  }
+
+  Future<void> _submit() async {
+    if (!_canSend) return;
+    if (!kUseApi) {
+      showAppNotification(context, 'API 未接続のため送信できません。');
+      return;
+    }
+    if (kIsProductionDb) {
+      showAppNotification(context, '本番DBでは読み取り専用のため送信できません。');
+      return;
+    }
+
+    setState(() => _sending = true);
+    try {
+      final userId = await EmployeeStorage.getCode();
+      final api = ApiClient(baseUrl: kApiBaseUrl);
+      final request = SlipTagLinkRequest(
+        userId: userId,
+        linkMode: widget.linkMode,
+        items: widget.selected
+            .map((p) => SlipTagLinkItem(epc: p.id, productCode: p.code))
+            .toList(),
+      );
+      await api.submitSlipTagLinks(
+        receptionNo: widget.slip.receptionNo,
+        request: request,
+      );
+      if (!mounted) return;
+      widget.onSubmitted();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _sending = false);
+      showAppNotification(context, '送信に失敗しました。\n$e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final slip = widget.slip;
+    final maxH = MediaQuery.of(context).size.height * 0.85;
+    return Align(
+      alignment: Alignment.center,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: AppDesign.deviceWidth, maxHeight: maxH),
+        child: Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  '紐付け内容の確認',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 10),
+                Text('伝票: ${slip.receptionNo}', style: const TextStyle(fontSize: 14)),
+                Text('会社名: ${slip.customerName}', style: const TextStyle(fontSize: 14)),
+                Text('用件: ${slip.subject}', style: const TextStyle(fontSize: 14)),
+                if (widget.linkMode != null && widget.linkMode!.isNotEmpty)
+                  Text('モード: ${widget.linkMode}', style: const TextStyle(fontSize: 14)),
+                const SizedBox(height: 12),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _sectionTitle('伝票内容と合致する紐付け商品'),
+                        if (_match.matchedProducts.isEmpty)
+                          const _EmptyHint('該当い')
+                        else
+                          ..._match.matchedProducts.map(_buildMatchedRow),
+                        const _SectionDivider(),
+                        _sectionTitle('伝票内容と不足する商品'),
+                        if (_match.shortageRows.isEmpty)
+                          const _EmptyHint('不足なし')
+                        else
+                          ..._match.shortageRows.map(_buildShortageRow),
+                        const _SectionDivider(),
+                        _sectionTitle('伝票内容にない紐付け商品'),
+                        if (_match.notOnSlipProducts.isEmpty)
+                          const _EmptyHint('なし')
+                        else
+                          ..._match.notOnSlipProducts.map(_buildNotOnSlipRow),
+                        if (_match.hasMismatch) ...[
+                          const SizedBox(height: 12),
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF8E1),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: const Color(0xFFFFE082)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  '伝票明細と選択内容に差があります。不足は黄、伝票にない商品は赤の「！」で示しています。',
+                                  style: TextStyle(fontSize: 12, color: Color(0xFF5D4037), height: 1.4),
+                                ),
+                                const SizedBox(height: 8),
+                                InkWell(
+                                  onTap: () => setState(() => _forceSendAck = !_forceSendAck),
+                                  child: Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      SizedBox(
+                                        width: 24,
+                                        height: 24,
+                                        child: Checkbox(
+                                          value: _forceSendAck,
+                                          onChanged: (v) =>
+                                              setState(() => _forceSendAck = v ?? false),
+                                          materialTapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      const Expanded(
+                                        child: Text(
+                                          '不足・不要な商品があることを確認し、この内容のまま送信する',
+                                          style: TextStyle(fontSize: 13, color: Color(0xFF333333), height: 1.35),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ] else if (_match.isComplete) ...[
+                          const SizedBox(height: 12),
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: AppDesign.linkedBackground,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: AppDesign.linkedBorder),
+                            ),
+                            child: const Text(
+                              '伝票の商品はすべて紐付け済みです。このまま送信できます。',
+                              style: TextStyle(fontSize: 13, color: Color(0xFF2E7D32)),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _canSend ? _submit : null,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppDesign.sendButton,
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor: AppDesign.disabledButton,
+                      disabledForegroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      elevation: 0,
+                    ),
+                    child: Text(
+                      _sending ? '送信中…' : '送信',
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: _sending ? null : widget.onSaveWithoutSend,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF333333),
+                      side: const BorderSide(color: AppDesign.navBarBorder),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    child: const Text(
+                      '送信せず一覧へ戻る',
+                      style: TextStyle(
+                        fontSize: 15,
+                        locale: Locale('ja', 'JP'),
+                      ),
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _sending ? null : widget.onRevise,
+                  child: const Text(
+                    '戻って修正する',
+                    style: TextStyle(
+                      fontSize: 14,
+                      locale: Locale('ja', 'JP'),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _sectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Text(
+        title,
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF555555)),
+      ),
+    );
+  }
+
+  Widget _buildMatchedRow(MockLinkProduct p) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  p.name,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF1565C0),
+                  ),
+                ),
+                Text(
+                  '（${p.code} / ${p.numberDisplay}）',
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF666666)),
+                ),
+              ],
+            ),
+          ),
+          const Text(
+            '✓',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF1565C0),
+              height: 1.2,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildShortageRow(SlipLinkShortageRow row) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  row.productName,
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                ),
+                Text(
+                  'コード ${row.productCode}  不足 ${row.shortageQty}（必要 ${row.requiredQty} / 紐付 ${row.linkedQty}）',
+                  style: const TextStyle(fontSize: 12, color: Color(0xFFF9A825)),
+                ),
+              ],
+            ),
+          ),
+          const Text(
+            '!',
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFFF9A825),
+              height: 1,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNotOnSlipRow(MockLinkProduct p) {
+    final onSlipButExcess = widget.slip.details.any(
+      (d) => d.productCode?.toString().trim() == p.code.trim(),
+    );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  p.name,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFFD32F2F),
+                  ),
+                ),
+                Text(
+                  '（${p.code} / ${p.numberDisplay}）'
+                  '${onSlipButExcess ? '  ← 必要数を超えた紐付け' : '  ← 伝票にない商品'}',
+                  style: const TextStyle(fontSize: 12, color: Color(0xFFD32F2F)),
+                ),
+              ],
+            ),
+          ),
+          const Text(
+            '!',
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFFD32F2F),
+              height: 1,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionDivider extends StatelessWidget {
+  const _SectionDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 10),
+      child: Divider(height: 1, thickness: 1, color: Color(0xFFE0E0E0)),
+    );
+  }
+}
+
+class _EmptyHint extends StatelessWidget {
+  const _EmptyHint(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Text(
+        text,
+        style: const TextStyle(fontSize: 13, color: Color(0xFF888888)),
       ),
     );
   }

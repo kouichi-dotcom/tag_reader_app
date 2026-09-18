@@ -6,6 +6,7 @@ import '../config/api_config.dart';
 import '../services/employee_cache.dart';
 import '../services/employee_storage.dart';
 import '../theme/app_design.dart';
+import '../widgets/main_flow_nav_bar.dart';
 
 /// 従業員コード入力画面
 /// コード入力後、対応する従業員名を保存しホームで表示する
@@ -91,40 +92,10 @@ class _EmployeeCodeScreenState extends State<EmployeeCodeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: const BoxDecoration(
-                    color: AppDesign.navBarBackground,
-                    border: Border(bottom: BorderSide(color: AppDesign.navBarBorder, width: 1)),
-                  ),
-                  child: SafeArea(
-                    bottom: false,
-                    child: Row(
-                      children: [
-                        if (widget.showBackButton)
-                          TextButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            style: TextButton.styleFrom(
-                              foregroundColor: AppDesign.primaryLink,
-                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                              minimumSize: Size.zero,
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                            child: const Text('← 戻る', style: TextStyle(fontSize: 16)),
-                          )
-                        else
-                          const SizedBox(width: 52),
-                        const Expanded(
-                          child: Text(
-                            '担当者コード入力',
-                            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.black),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                        const SizedBox(width: 52),
-                      ],
-                    ),
-                  ),
+                MainFlowNavBar(
+                  showBackButton: widget.showBackButton,
+                  title: '担当者コード入力',
+                  onBack: () => Navigator.of(context).pop(),
                 ),
                 Expanded(
                   child: SingleChildScrollView(

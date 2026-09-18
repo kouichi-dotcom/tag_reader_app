@@ -40,6 +40,10 @@ NS_ASSUME_NONNULL_BEGIN
 + (BOOL)setRadioPowerDecreaseDecibel:(NSInteger)decreaseDecibel
                             outError:(NSError *_Nullable *_Nullable)outError;
 
++ (BOOL)writeEpcWithCurrentEpc:(NSString *)currentEpc
+                        newEpc:(NSString *)newEpc
+                      outError:(NSError *_Nullable *_Nullable)outError;
+
 /// Android の bonded 相当: UserDefaults に保存した過去接続デバイス（iOS は MAC が取れないため UUID 文字列を address として渡す）
 + (NSArray<NSDictionary *> *)knownBondedStyleDevices;
 
