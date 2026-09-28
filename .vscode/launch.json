@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "タグアプリ：テスト環境",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "args": [
+        "--flavor",
+        "staging",
+        "--dart-define=FLAVOR=staging",
+        "--dart-define=APP_ENV=test"
+      ]
+    },
+    {
+      "name": "タグアプリ：本番環境",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "args": [
+        "--flavor",
+        "prod",
+        "--dart-define=FLAVOR=prod",
+        "--dart-define=APP_ENV=prod"
+      ]
+    }
+  ]
+}

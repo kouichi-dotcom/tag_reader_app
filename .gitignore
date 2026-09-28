@@ -48,3 +48,7 @@ app.*.map.json
 # バイナリはリポジトリに含めず、手元で配置する
 /android/app/libs/TSS_SDK.aar
 /android/app/src/main/jniLibs/**/libDeviceAPI.so
+
+# 一時展開・検証用
+.tmp_tss_aar/
+flutter_01.png

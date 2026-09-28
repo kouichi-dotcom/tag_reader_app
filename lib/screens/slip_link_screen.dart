@@ -408,9 +408,11 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
                             _InfoLine(label: '伝票番号', value: slip.receptionNo),
                             _InfoLine(
                               label: '担当者',
-                              value: slip.handlerName?.trim().isNotEmpty == true
-                                  ? slip.handlerName!
-                                  : (_resolvedHandlerName ?? slip.handlerDisplay),
+                              value: ReceptionSlip.formatHandlerDisplayName(
+                                slip.handlerName?.trim().isNotEmpty == true
+                                    ? slip.handlerName!
+                                    : (_resolvedHandlerName ?? slip.handlerDisplay),
+                              ),
                             ),
                             _InfoLine(label: '会社名', value: slip.customerName),
                             _InfoLine(label: '現場名', value: slip.siteName),

@@ -573,11 +573,13 @@ class _SlipListScreenState extends State<SlipListScreen> {
 
   /// 担当者表示：APIの handlerName または EmployeeCache、なければ「コード: X」／「--」
   String _resolvedHandlerDisplay(ReceptionSlip slip) {
-    if (slip.handlerName != null && slip.handlerName!.trim().isNotEmpty) return slip.handlerName!;
+    if (slip.handlerName != null && slip.handlerName!.trim().isNotEmpty) {
+      return ReceptionSlip.formatHandlerDisplayName(slip.handlerName);
+    }
     final code = slip.handlerCode?.trim();
     if (code != null && code.isNotEmpty) {
       final name = EmployeeCache.instance.getNameFromMemory(code);
-      if (name != null) return name;
+      if (name != null) return ReceptionSlip.formatHandlerDisplayName(name);
     }
     return slip.handlerDisplay;
   }

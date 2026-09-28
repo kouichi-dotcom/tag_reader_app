@@ -269,6 +269,22 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
     // 接続処理の前に 1 フレーム分待ってスピナーを表示する。
     await SchedulerBinding.instance.endOfFrame;
 
+    // 別リーダーへ切り替えるときは先に切断（SDK 側の既存セッション残り対策）
+    final previous = _connectedDevice;
+    if (previous != null && previous.id != device.id) {
+      try {
+        await _reader.disconnect();
+      } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _connectedDevice = null;
+          _firmwareVersion = null;
+        });
+      }
+      await ConnectedDeviceStorage.clear();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    }
+
     try {
       final ok = await _reader.connect(name: device.name, address: device.id);
       if (!mounted) return;

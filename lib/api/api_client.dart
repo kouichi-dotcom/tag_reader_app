@@ -208,11 +208,9 @@ class ApiClient {
   }
 
   /// 変更した商品データを送信（POST /api/product-updates）。DB の [ICタグ台帳].tag_mode2 を更新。
-  /// 本番DB接続時は読み取り専用のため呼び出し不可。失敗時は例外を投げる。
+  /// prod Flavor または API readOnly 時は呼び出し不可。
   Future<void> submitProductUpdate(ProductUpdateRequest request) async {
-    if (kIsProductionDb) {
-      throw Exception('本番DBでは読み取り専用のため更新できません。');
-    }
+    _ensureUpdatesAllowed('更新');
     final uri = Uri.parse('${_normalizedBase}api/product-updates');
     final response = await http
         .post(
@@ -249,9 +247,7 @@ class ApiClient {
 
   /// ICタグ台帳へ新規登録（POST /api/products/tag-ledger）。
   Future<TagLedgerRegisterResult> registerTagLedger(TagLedgerRegisterRequest request) async {
-    if (kIsProductionDb) {
-      throw Exception('本番DBでは読み取り専用のため登録できません。');
-    }
+    _ensureUpdatesAllowed('登録');
     final uri = Uri.parse('${_normalizedBase}api/products/tag-ledger');
     final response = await http
         .post(
@@ -285,14 +281,12 @@ class ApiClient {
   /// 受付伝票にタグを紐付けて送信（POST /api/reception-slips/{receptionNo}/link-tags）。
   /// 用件に応じて [ICタグ台帳].tag_mode2 / [tag_table3].tag_mode・complete を更新する。
   /// 配達・来店(納品)=納品、引取・来店(返品)=返品。用件「交換」のときは [SlipTagLinkRequest.linkMode] 必須。
-  /// 本番DB接続時は読み取り専用のため呼び出し不可。
+  /// prod Flavor または API readOnly 時は呼び出し不可。
   Future<SlipTagLinkResult> submitSlipTagLinks({
     required String receptionNo,
     required SlipTagLinkRequest request,
   }) async {
-    if (kIsProductionDb) {
-      throw Exception('本番DBでは読み取り専用のため更新できません。');
-    }
+    _ensureUpdatesAllowed('更新');
     final encodedNo = Uri.encodeComponent(receptionNo.trim());
     final uri = Uri.parse('${_normalizedBase}api/reception-slips/$encodedNo/link-tags');
     final response = await http
@@ -316,6 +310,15 @@ class ApiClient {
     }
     final map = jsonDecode(response.body) as Map<String, dynamic>;
     return SlipTagLinkResult.fromJson(map);
+  }
+
+  /// 更新系 API の入口ガード（prod Flavor は常に拒否、staging は API readOnly に従う）。
+  void _ensureUpdatesAllowed(String actionLabel) {
+    if (!kUpdatesForbidden) return;
+    if (kIsProdFlavor) {
+      throw Exception('本番アプリでは読み取り専用のため$actionLabelできません。');
+    }
+    throw Exception('読み取り専用のため$actionLabelできません。');
   }
 
   /// 受付台帳の伝票一覧を取得（GET /api/reception-slips）

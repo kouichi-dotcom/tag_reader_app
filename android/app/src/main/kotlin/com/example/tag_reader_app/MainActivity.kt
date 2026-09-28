@@ -410,18 +410,18 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
     }
 
     private fun isLikelyReaderName(name: String): Boolean {
+        // iOS TssRfidSdkSession.m と同等のプレフィックス（90b4e61 で誤って縮小されていたため復元）
         val prefixes = listOf(
             "R5000",
             "R-5000",
-            "Rー5000",
-            "SR_7",
-            "SR-7",
-            "SR＿7",
-            "SR7",
-            "SR７",
-           
+            "Rー5000"
         )
-        return prefixes.any { p -> name.equals(p, ignoreCase = true) || name.startsWith(p) }
+        val n = name.trim()
+        if (n.isEmpty()) return false
+        return prefixes.any { p ->
+            n.equals(p, ignoreCase = true) ||
+                n.startsWith(p, ignoreCase = true)
+        }
     }
 
     private fun handleConnect(call: MethodCall, result: MethodChannel.Result) {
@@ -446,6 +446,20 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
 
         rfidConnectExecutor.execute {
             runCatching {
+                // iOS と同様: 既存接続のまま別リーダーへ繋ぐと失敗しやすいため、先に切断して短い待機を入れる。
+                if (rfidUtil.isConnect()) {
+                    runCatching { rfidUtil.disconnect() }
+                    Thread.sleep(450)
+                }
+                // スキャン中の接続は失敗しやすいため停止する。
+                val scanner = bleScanner
+                if (scanner != null) {
+                    try {
+                        scanner.stopScan(bleScanCallback)
+                    } catch (_: Exception) {
+                    }
+                    bleScanner = null
+                }
                 // 接続前に context とリーダー名を設定
                 rfidUtil.initReader(this@MainActivity, name)
                 rfidUtil.connect(address)

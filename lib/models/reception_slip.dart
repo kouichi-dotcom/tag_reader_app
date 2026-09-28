@@ -39,9 +39,18 @@ class ReceptionSlip {
   final String? latLng;
   final List<ReceptionDetailItem> details;
 
+  /// DB上の「未入力」を画面向けの「担当者未入力」に変換する
+  static String formatHandlerDisplayName(String? name) {
+    final t = name?.trim() ?? '';
+    if (t == '未入力') return '担当者未入力';
+    return t;
+  }
+
   /// 担当者表示用：担当者名があればそのまま、なければ「コード: X」または「--」
   String get handlerDisplay {
-    if (handlerName != null && handlerName!.trim().isNotEmpty) return handlerName!;
+    if (handlerName != null && handlerName!.trim().isNotEmpty) {
+      return formatHandlerDisplayName(handlerName);
+    }
     if (handlerCode != null && handlerCode!.trim().isNotEmpty) return 'コード: ${handlerCode!.trim()}';
     return '--';
   }
