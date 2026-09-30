@@ -19,9 +19,13 @@ import '../models/slip_list_filter.dart';
 import '../models/slip_tag_link_request.dart';
 import '../models/tag_ledger_item.dart';
 import '../models/tag_ledger_register.dart';
+import 'api_exception.dart';
 
 /// リクエストが返らない場合のタイムアウト（接続不可で「取得中」のままになるのを防ぐ）
 const Duration _kRequestTimeout = Duration(seconds: 15);
+
+TimeoutException _timeoutException() =>
+    TimeoutException('接続がタイムアウトしました');
 
 /// 商品照合・担当者取得・商品データ更新 API を呼び出すクライアント
 class ApiClient {
@@ -32,6 +36,22 @@ class ApiClient {
   /// 末尾のスラッシュを除いたベース URL を返す
   String get _normalizedBase => baseUrl.endsWith('/') ? baseUrl : '$baseUrl/';
 
+  Never _throwHttp(String apiName, http.Response response, {String? debugMessage}) {
+    throw ApiException(
+      apiName: apiName,
+      statusCode: response.statusCode,
+      debugMessage: debugMessage ??
+          (response.body.isEmpty ? null : response.body),
+    );
+  }
+
+  Never _throwInvalidFormat(String apiName) {
+    throw ApiException(
+      apiName: apiName,
+      debugMessage: 'invalid response format',
+    );
+  }
+
   /// 担当者コードをキーに担当者氏名を取得（GET /api/employees?code=...）
   Future<Employee?> fetchEmployee(String code) async {
     final uri = Uri.parse('${_normalizedBase}api/employees').replace(
@@ -39,7 +59,7 @@ class ApiClient {
     );
     final response = await http.get(uri).timeout(
       _kRequestTimeout,
-      onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+      onTimeout: () => throw _timeoutException(),
     );
     if (response.statusCode != 200) return null;
     final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -59,7 +79,7 @@ class ApiClient {
     );
     final response = await http.get(uri).timeout(
       _kRequestTimeout,
-      onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+      onTimeout: () => throw _timeoutException(),
     );
     if (response.statusCode != 200) return [];
     final list = jsonDecode(response.body) as List<dynamic>;
@@ -75,7 +95,7 @@ class ApiClient {
     );
     final response = await http.get(uri).timeout(
       _kRequestTimeout,
-      onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+      onTimeout: () => throw _timeoutException(),
     );
     if (response.statusCode != 200) return null;
     final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -85,6 +105,7 @@ class ApiClient {
   /// 在庫確認用（GET /api/products/inventory）。[商品台帳] と [ICタグ台帳] の集計。
   /// [categoryId] で区分絞り込み、[query] で商品名・商品コードを部分一致検索。
   Future<List<InventoryItem>> fetchInventory({int? categoryId, String? query}) async {
+    const apiName = 'products/inventory';
     final params = <String, String>{};
     if (categoryId != null) params['categoryId'] = categoryId.toString();
     final q = query?.trim();
@@ -92,14 +113,14 @@ class ApiClient {
     final uri = Uri.parse('${_normalizedBase}api/products/inventory').replace(queryParameters: params.isEmpty ? null : params);
     final response = await http.get(uri).timeout(
       _kRequestTimeout,
-      onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+      onTimeout: () => throw _timeoutException(),
     );
     if (response.statusCode != 200) {
-      throw Exception('在庫取得エラー: ${response.statusCode} ${response.body}');
+      _throwHttp(apiName, response);
     }
     final decoded = jsonDecode(response.body);
     if (decoded is! List<dynamic>) {
-      throw Exception('在庫APIの形式が不正です');
+      _throwInvalidFormat(apiName);
     }
     return decoded
         .map((e) => InventoryItem.fromJson(Map<String, dynamic>.from(e as Map)))
@@ -108,17 +129,18 @@ class ApiClient {
 
   /// 在庫確認の区分グリッド用（GET /api/products/categories）。[商品区分マスター]。
   Future<List<ProductCategory>> fetchProductCategories() async {
+    const apiName = 'products/categories';
     final uri = Uri.parse('${_normalizedBase}api/products/categories');
     final response = await http.get(uri).timeout(
       _kRequestTimeout,
-      onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+      onTimeout: () => throw _timeoutException(),
     );
     if (response.statusCode != 200) {
-      throw Exception('商品区分取得エラー: ${response.statusCode} ${response.body}');
+      _throwHttp(apiName, response);
     }
     final decoded = jsonDecode(response.body);
     if (decoded is! List<dynamic>) {
-      throw Exception('商品区分APIの形式が不正です');
+      _throwInvalidFormat(apiName);
     }
     return decoded
         .map((e) => ProductCategory.fromJson(Map<String, dynamic>.from(e as Map)))
@@ -127,19 +149,20 @@ class ApiClient {
 
   /// 在庫確認: 同一商品コードの個体一覧（GET /api/products/inventory/units?code=）
   Future<List<InventoryUnitRow>> fetchInventoryUnits(int productCode) async {
+    const apiName = 'products/inventory/units';
     final uri = Uri.parse('${_normalizedBase}api/products/inventory/units').replace(
       queryParameters: {'code': productCode.toString()},
     );
     final response = await http.get(uri).timeout(
       _kRequestTimeout,
-      onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+      onTimeout: () => throw _timeoutException(),
     );
     if (response.statusCode != 200) {
-      throw Exception('個体一覧取得エラー: ${response.statusCode} ${response.body}');
+      _throwHttp(apiName, response);
     }
     final decoded = jsonDecode(response.body);
     if (decoded is! List<dynamic>) {
-      throw Exception('個体一覧APIの形式が不正です');
+      _throwInvalidFormat(apiName);
     }
     return decoded
         .map((e) => InventoryUnitRow.fromJson(Map<String, dynamic>.from(e as Map)))
@@ -151,7 +174,7 @@ class ApiClient {
     final uri = Uri.parse('${_normalizedBase}api/products/catalog');
     final response = await http.get(uri).timeout(
       _kRequestTimeout,
-      onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+      onTimeout: () => throw _timeoutException(),
     );
     if (response.statusCode != 200) return [];
     final list = jsonDecode(response.body) as List<dynamic>;
@@ -162,13 +185,14 @@ class ApiClient {
 
   /// ICタグ台帳の一括取得（GET /api/products/tag-ledger）。日次キャッシュ用（廃棄除外）。
   Future<List<TagLedgerItem>> fetchTagLedger() async {
+    const apiName = 'products/tag-ledger';
     final uri = Uri.parse('${_normalizedBase}api/products/tag-ledger');
     final response = await http.get(uri).timeout(
       _kRequestTimeout,
-      onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+      onTimeout: () => throw _timeoutException(),
     );
     if (response.statusCode != 200) {
-      throw Exception('タグ台帳取得エラー: ${response.statusCode} ${response.body}');
+      _throwHttp(apiName, response);
     }
     final list = jsonDecode(response.body) as List<dynamic>;
     return list
@@ -184,7 +208,7 @@ class ApiClient {
     );
     final response = await http.get(uri).timeout(
       _kRequestTimeout,
-      onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+      onTimeout: () => throw _timeoutException(),
     );
     if (response.statusCode != 200) return null;
     final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -198,7 +222,7 @@ class ApiClient {
     );
     final response = await http.get(uri).timeout(
       _kRequestTimeout,
-      onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+      onTimeout: () => throw _timeoutException(),
     );
     if (response.statusCode != 200) return [];
     final list = jsonDecode(response.body) as List<dynamic>;
@@ -208,9 +232,10 @@ class ApiClient {
   }
 
   /// 変更した商品データを送信（POST /api/product-updates）。DB の [ICタグ台帳].tag_mode2 を更新。
-  /// prod Flavor または API readOnly 時は呼び出し不可。
+  /// staging は API readOnly 時のみ呼び出し不可。prod はアプリ側で許可（最終可否は API Writes）。
   Future<void> submitProductUpdate(ProductUpdateRequest request) async {
-    _ensureUpdatesAllowed('更新');
+    const apiName = 'product-updates';
+    _ensureProductUpdatesAllowed('更新');
     final uri = Uri.parse('${_normalizedBase}api/product-updates');
     final response = await http
         .post(
@@ -220,34 +245,40 @@ class ApiClient {
         )
         .timeout(
           _kRequestTimeout,
-          onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+          onTimeout: () => throw _timeoutException(),
         );
-    if (response.statusCode == 404) {
-      throw Exception('該当するタグが見つかりませんでした（EPC: ${request.epc}）');
-    }
     if (response.statusCode >= 400) {
-      throw Exception('送信エラー: ${response.statusCode} ${response.body}');
+      _throwHttp(
+        apiName,
+        response,
+        debugMessage: response.statusCode == 404
+            ? 'tag not found epc=${request.epc}'
+            : response.body,
+      );
     }
   }
 
   /// 商品コードの次番号を取得（GET /api/products/tag-ledger/next-number）。
   Future<int> fetchNextTagNumber(int productCode) async {
+    const apiName = 'products/tag-ledger/next-number';
     final uri = Uri.parse('${_normalizedBase}api/products/tag-ledger/next-number')
         .replace(queryParameters: {'code': productCode.toString()});
     final response = await http.get(uri).timeout(
       _kRequestTimeout,
-      onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+      onTimeout: () => throw _timeoutException(),
     );
     if (response.statusCode != 200) {
-      throw Exception('次番号取得エラー: ${response.statusCode} ${response.body}');
+      _throwHttp(apiName, response);
     }
     final json = jsonDecode(response.body) as Map<String, dynamic>;
     return (json['nextNumber'] as num).toInt();
   }
 
   /// ICタグ台帳へ新規登録（POST /api/products/tag-ledger）。
+  /// staging は API readOnly 時のみ呼び出し不可。prod はアプリ側で許可（最終可否は API Writes）。
   Future<TagLedgerRegisterResult> registerTagLedger(TagLedgerRegisterRequest request) async {
-    _ensureUpdatesAllowed('登録');
+    const apiName = 'products/tag-ledger';
+    _ensureTagLedgerAllowed('登録');
     final uri = Uri.parse('${_normalizedBase}api/products/tag-ledger');
     final response = await http
         .post(
@@ -257,22 +288,18 @@ class ApiClient {
         )
         .timeout(
           _kRequestTimeout,
-          onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+          onTimeout: () => throw _timeoutException(),
         );
-    if (response.statusCode == 404) {
-      throw Exception('商品コードが見つかりません: ${response.body}');
-    }
-    if (response.statusCode == 409) {
-      String msg = '登録できません（重複または読み取り専用）';
-      try {
-        final map = jsonDecode(response.body) as Map<String, dynamic>;
-        final m = map['message'] as String?;
-        if (m != null && m.isNotEmpty) msg = m;
-      } catch (_) {}
-      throw Exception(msg);
-    }
     if (response.statusCode >= 400) {
-      throw Exception('登録エラー: ${response.statusCode} ${response.body}');
+      String? debug = response.body;
+      if (response.statusCode == 409) {
+        try {
+          final map = jsonDecode(response.body) as Map<String, dynamic>;
+          final m = map['message'] as String?;
+          if (m != null && m.isNotEmpty) debug = m;
+        } catch (_) {}
+      }
+      _throwHttp(apiName, response, debugMessage: debug);
     }
     final map = jsonDecode(response.body) as Map<String, dynamic>;
     return TagLedgerRegisterResult.fromJson(map);
@@ -281,12 +308,13 @@ class ApiClient {
   /// 受付伝票にタグを紐付けて送信（POST /api/reception-slips/{receptionNo}/link-tags）。
   /// 用件に応じて [ICタグ台帳].tag_mode2 / [tag_table3].tag_mode・complete を更新する。
   /// 配達・来店(納品)=納品、引取・来店(返品)=返品。用件「交換」のときは [SlipTagLinkRequest.linkMode] 必須。
-  /// prod Flavor または API readOnly 時は呼び出し不可。
+  /// staging は API readOnly 時のみ呼び出し不可。prod はアプリ側で許可（最終可否は API Writes）。
   Future<SlipTagLinkResult> submitSlipTagLinks({
     required String receptionNo,
     required SlipTagLinkRequest request,
   }) async {
-    _ensureUpdatesAllowed('更新');
+    const apiName = 'reception-slips/link-tags';
+    _ensureLinkTagsAllowed('更新');
     final encodedNo = Uri.encodeComponent(receptionNo.trim());
     final uri = Uri.parse('${_normalizedBase}api/reception-slips/$encodedNo/link-tags');
     final response = await http
@@ -297,27 +325,30 @@ class ApiClient {
         )
         .timeout(
           _kRequestTimeout,
-          onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+          onTimeout: () => throw _timeoutException(),
         );
-    if (response.statusCode == 404) {
-      throw Exception('紐付け失敗（見つかりません）: ${response.body}');
-    }
-    if (response.statusCode == 409) {
-      throw Exception('読み取り専用のため紐付けできません。');
-    }
     if (response.statusCode >= 400) {
-      throw Exception('紐付け送信エラー: ${response.statusCode} ${response.body}');
+      _throwHttp(apiName, response);
     }
     final map = jsonDecode(response.body) as Map<String, dynamic>;
     return SlipTagLinkResult.fromJson(map);
   }
 
-  /// 更新系 API の入口ガード（prod Flavor は常に拒否、staging は API readOnly に従う）。
-  void _ensureUpdatesAllowed(String actionLabel) {
-    if (!kUpdatesForbidden) return;
-    if (kIsProdFlavor) {
-      throw Exception('本番アプリでは読み取り専用のため$actionLabelできません。');
-    }
+  /// product-updates 専用ガード（prod は許可、staging は API readOnly に従う）。
+  void _ensureProductUpdatesAllowed(String actionLabel) {
+    if (!kProductUpdatesForbidden) return;
+    throw Exception('読み取り専用のため$actionLabelできません。');
+  }
+
+  /// tag-ledger 専用ガード（prod は許可、staging は API readOnly に従う）。
+  void _ensureTagLedgerAllowed(String actionLabel) {
+    if (!kTagLedgerForbidden) return;
+    throw Exception('読み取り専用のため$actionLabelできません。');
+  }
+
+  /// link-tags 専用ガード（prod は許可、staging は API readOnly に従う）。
+  void _ensureLinkTagsAllowed(String actionLabel) {
+    if (!kLinkTagsForbidden) return;
     throw Exception('読み取り専用のため$actionLabelできません。');
   }
 
@@ -326,6 +357,7 @@ class ApiClient {
   Future<List<ReceptionSlip>> fetchReceptionSlips({
     SlipListFilter filter = SlipListFilter.all,
   }) async {
+    const apiName = 'reception-slips';
     final queryParams = <String, String>{};
     if (filter.date != null) {
       queryParams['date'] = filter.date!.toIso8601String().split('T')[0];
@@ -348,18 +380,14 @@ class ApiClient {
     final uri = Uri.parse('${_normalizedBase}api/reception-slips').replace(
       queryParameters: queryParams.isNotEmpty ? queryParams : null,
     );
-    print('[API] GET $uri'); // デバッグ用
     final response = await http.get(uri).timeout(
       _kRequestTimeout,
-      onTimeout: () => throw TimeoutException('接続がタイムアウトしました。API の URL とネットワークを確認してください。'),
+      onTimeout: () => throw _timeoutException(),
     );
-    print('[API] Status: ${response.statusCode}'); // デバッグ用
     if (response.statusCode != 200) {
-      print('[API] Error body: ${response.body}'); // デバッグ用
-      throw Exception('受付台帳取得エラー: ${response.statusCode} ${response.body}');
+      _throwHttp(apiName, response);
     }
     final list = jsonDecode(response.body) as List<dynamic>;
-    print('[API] Received ${list.length} slips'); // デバッグ用
     return list
         .map((e) => ReceptionSlip.fromJson(e as Map<String, dynamic>))
         .toList();

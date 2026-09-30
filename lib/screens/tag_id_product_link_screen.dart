@@ -13,6 +13,7 @@ import '../services/radio_power_storage.dart';
 import '../services/tag_ledger_cache.dart';
 import '../services/tag_reader_service.dart';
 import '../theme/app_design.dart';
+import '../utils/api_error_presenter.dart';
 import '../widgets/main_flow_nav_bar.dart';
 import '../widgets/reader_not_connected_dialog.dart';
 
@@ -200,6 +201,10 @@ class _TagIdProductLinkScreenState extends State<TagIdProductLinkScreen> {
   }
 
   Future<void> _onRegisterPressed() async {
+    if (kTagLedgerForbidden) {
+      _snack('読み取り専用のため登録できません');
+      return;
+    }
     final epc = _currentEpc;
     if (epc == null || epc.isEmpty) {
       _snack('先にタグを読み取ってください');
@@ -248,10 +253,11 @@ class _TagIdProductLinkScreenState extends State<TagIdProductLinkScreen> {
       try {
         previewNumber =
             await ApiClient(baseUrl: kApiBaseUrl).fetchNextTagNumber(code);
-      } catch (e) {
+      } catch (e, st) {
+        logApiError(e, apiName: 'products/tag-ledger/next-number', stackTrace: st);
         await _restoreUserPower();
         if (mounted) setState(() => _isBusy = false);
-        _snack('次の個体番号の取得に失敗しました: $e');
+        _snack(toUserFacingApiError(e).displayText);
         return;
       }
     }
@@ -297,10 +303,11 @@ class _TagIdProductLinkScreenState extends State<TagIdProductLinkScreen> {
       });
       await _restoreUserPower();
       _snack('台帳に登録しました（個体番号: ${result.number}）');
-    } catch (e) {
+    } catch (e, st) {
+      logApiError(e, apiName: 'products/tag-ledger', stackTrace: st);
       await _restoreUserPower();
       if (mounted) setState(() => _isBusy = false);
-      _snack('$e');
+      _snack(toUserFacingApiError(e).displayText);
     }
   }
 
@@ -520,7 +527,10 @@ class _TagIdProductLinkScreenState extends State<TagIdProductLinkScreen> {
                       ],
                       const SizedBox(height: 24),
                       ElevatedButton(
-                        onPressed: (_isBusy || epc == null || _ledgerHit)
+                        onPressed: (_isBusy ||
+                                kTagLedgerForbidden ||
+                                epc == null ||
+                                _ledgerHit)
                             ? null
                             : _onRegisterPressed,
                         style: ElevatedButton.styleFrom(
@@ -538,7 +548,11 @@ class _TagIdProductLinkScreenState extends State<TagIdProductLinkScreen> {
                                 ),
                               )
                             : Text(
-                                _ledgerHit ? '設定（登録済みのため不可）' : '新規登録',
+                                kTagLedgerForbidden
+                                    ? '新規登録（読み取り専用）'
+                                    : (_ledgerHit
+                                        ? '設定（登録済みのため不可）'
+                                        : '新規登録'),
                                 style: const TextStyle(fontSize: 16),
                               ),
                       ),

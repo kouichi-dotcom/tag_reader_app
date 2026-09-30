@@ -15,6 +15,7 @@ import '../services/employee_cache.dart';
 import '../services/employee_storage.dart';
 import '../services/product_cache.dart';
 import '../theme/app_design.dart';
+import '../utils/api_error_presenter.dart';
 import '../widgets/app_notification.dart';
 import '../widgets/main_flow_nav_bar.dart';
 import 'slip_link_screen.dart';
@@ -131,7 +132,7 @@ class _SlipListScreenState extends State<SlipListScreen> {
       showAppNotification(context, 'API 未接続のため送信できません。');
       return;
     }
-    if (kIsProductionDb) {
+    if (kLinkTagsForbidden) {
       showAppNotification(context, '本番DBでは読み取り専用のため送信できません。');
       return;
     }
@@ -204,11 +205,13 @@ class _SlipListScreenState extends State<SlipListScreen> {
                 result.warnings.map((w) => '[$receptionNo$modeSuffix] $w'),
               );
             }
-          } catch (e) {
+          } catch (e, st) {
             slipOk = false;
+            logApiError(e, apiName: 'reception-slips/link-tags', stackTrace: st);
             final modeSuffix =
                 request.linkMode != null ? '/${request.linkMode}' : '';
-            errors.add('[$receptionNo$modeSuffix] $e');
+            final userError = toUserFacingApiError(e);
+            errors.add('[$receptionNo$modeSuffix] ${userError.title}: ${userError.message}');
           }
         }
 
@@ -240,11 +243,13 @@ class _SlipListScreenState extends State<SlipListScreen> {
       showAppNotification(
         context,
         '送信に失敗しました。\n${errors.first}',
+        title: '送信エラー',
       );
     } else {
       showAppNotification(
         context,
         '成功 $successCount 件 / 失敗 ${errors.length} 件。\n${errors.first}',
+        title: '送信エラー',
       );
     }
   }
@@ -380,14 +385,16 @@ class _SlipListScreenState extends State<SlipListScreen> {
       }
 
       _resolveCaches(api, slips);
-    } catch (e) {
+    } catch (e, st) {
       if (!mounted) return;
       setState(() {
         _fetching = false;
         _loadingMore = false;
       });
       if (!append) {
-        showAppNotification(context, '伝票取得エラー: $e\n\nAPI URL: $kApiBaseUrl\n\nAPIサーバーが起動しているか確認してください。');
+        showAppApiError(context, e, apiName: 'reception-slips', stackTrace: st);
+      } else {
+        logApiError(e, apiName: 'reception-slips', stackTrace: st);
       }
     }
   }

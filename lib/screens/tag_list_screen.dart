@@ -14,6 +14,7 @@ import '../services/storage_location_storage.dart';
 import '../services/tag_ledger_cache.dart';
 import '../services/tag_reader_service.dart';
 import '../theme/app_design.dart';
+import '../utils/api_error_presenter.dart';
 import '../widgets/app_notification.dart';
 import '../widgets/main_flow_nav_bar.dart';
 import '../widgets/reader_not_connected_dialog.dart';
@@ -160,10 +161,12 @@ class _TagListScreenState extends State<TagListScreen> {
           statusFromDb: true,
         );
       });
-    } catch (e) {
+    } catch (e, st) {
+      logApiError(e, apiName: 'products', stackTrace: st);
       if (mounted) {
+        final userError = toUserFacingApiError(e);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('DB照会に失敗しました: $e')),
+          SnackBar(content: Text(userError.displayText)),
         );
       }
     } finally {
@@ -208,10 +211,12 @@ class _TagListScreenState extends State<TagListScreen> {
           const SnackBar(content: Text('取得できるデータがありませんでした。')),
         );
       }
-    } catch (e) {
+    } catch (e, st) {
+      logApiError(e, apiName: 'products/random', stackTrace: st);
       if (mounted) {
+        final userError = toUserFacingApiError(e);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('取得エラー: $e')),
+          SnackBar(content: Text(userError.displayText)),
         );
       }
     } finally {
@@ -358,7 +363,7 @@ class _TagListScreenState extends State<TagListScreen> {
   }
 
   void _toggleStatusSelect(int index) {
-    if (kIsProductionDb) return;
+    if (kProductUpdatesForbidden) return;
     setState(() {
       if (_selectedForStatus.contains(index)) {
         _selectedForStatus.remove(index);
@@ -369,7 +374,7 @@ class _TagListScreenState extends State<TagListScreen> {
   }
 
   void _toggleSelectAll() {
-    if (kIsProductionDb) return;
+    if (kProductUpdatesForbidden) return;
     setState(() {
       if (_selectedForStatus.length == _reads.length) {
         _selectedForStatus.clear();
@@ -385,7 +390,7 @@ class _TagListScreenState extends State<TagListScreen> {
       _reads.isNotEmpty && _selectedForStatus.length == _reads.length;
 
   void _showStatusDialog(BuildContext context, int index) {
-    if (kIsProductionDb) {
+    if (kProductUpdatesForbidden) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('本番DBでは読み取り専用のため、ステータスを変更できません。'),
@@ -515,7 +520,7 @@ class _TagListScreenState extends State<TagListScreen> {
     final storageLocationCode = await StorageLocationStorage.getStorageLocationCode();
 
     int successCount = 0;
-    String? errorMessage;
+    UserFacingApiError? sendError;
 
     try {
       for (final index in toSend) {
@@ -535,15 +540,16 @@ class _TagListScreenState extends State<TagListScreen> {
           if (mounted) {
             setState(() => _sendCompleted = successCount);
           }
-        } catch (e) {
-          errorMessage = e.toString();
+        } catch (e, st) {
+          logApiError(e, apiName: 'product-updates', stackTrace: st);
+          sendError = toUserFacingApiError(e);
           break;
         }
       }
 
       if (!mounted) return;
-      if (errorMessage != null) {
-        showAppNotification(context, '送信エラー: $errorMessage');
+      if (sendError != null) {
+        showAppNotification(context, sendError.message, title: sendError.title);
         return;
       }
       setState(() {
@@ -648,14 +654,14 @@ class _TagListScreenState extends State<TagListScreen> {
                     ],
                   ),
                 ),
-                // 送信待ちバー（本番では読み取り専用のため送信不可）
+                // 送信待ちバー（product-updates 禁止時は送信不可）
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   color: AppDesign.pendingBarBackground,
                   child: Row(
                     children: [
                       Expanded(
-                        child: kIsProductionDb
+                        child: kProductUpdatesForbidden
                             ? Text(
                                 '読込件数: ${_reads.length} 件  本番のため読み取り専用（送信不可）',
                                 style: const TextStyle(fontSize: 14, color: Color(0xFF8A7000)),
@@ -680,7 +686,7 @@ class _TagListScreenState extends State<TagListScreen> {
                       ),
                       const SizedBox(width: 8),
                       ElevatedButton(
-                        onPressed: (!_isSending && !kIsProductionDb && _pendingCount > 0)
+                        onPressed: (!_isSending && !kProductUpdatesForbidden && _pendingCount > 0)
                             ? _sendSelected
                             : null,
                         style: ElevatedButton.styleFrom(
@@ -712,7 +718,7 @@ class _TagListScreenState extends State<TagListScreen> {
                                 ],
                               )
                             : Text(
-                                kIsProductionDb ? '送信（無効）' : '送信',
+                                kProductUpdatesForbidden ? '送信（無効）' : '送信',
                                 style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                               ),
                       ),
@@ -720,7 +726,7 @@ class _TagListScreenState extends State<TagListScreen> {
                   ),
                 ),
                 // 一覧ヘッダー（全選択）
-                if (_reads.isNotEmpty && !kIsProductionDb)
+                if (_reads.isNotEmpty && !kProductUpdatesForbidden)
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: const BoxDecoration(
@@ -790,7 +796,7 @@ class _TagListScreenState extends State<TagListScreen> {
                             final statusLabel = _effectiveStatus(index);
                             final statusStyle = _statusStyleFromLabel(statusLabel);
                             final showStatusBadge = statusLabel != '不明';
-                            final canSelect = !kIsProductionDb;
+                            final canSelect = !kProductUpdatesForbidden;
 
                             return Material(
                               color: isPendingSend

@@ -5,6 +5,7 @@ import '../config/api_config.dart';
 import '../models/inventory_item.dart';
 import '../models/inventory_unit_row.dart';
 import '../theme/app_design.dart';
+import '../utils/api_error_presenter.dart';
 import '../widgets/main_flow_nav_bar.dart';
 
 /// 在庫確認: 商品詳細（料金・ステータス集計・メーカー別内訳）
@@ -73,12 +74,13 @@ class _InventoryUnitsScreenState extends State<InventoryUnitsScreen> {
         );
         _loading = false;
       });
-    } catch (e) {
+    } catch (e, st) {
+      logApiError(e, apiName: 'products/inventory/units', stackTrace: st);
       if (!mounted) return;
       setState(() {
         _byManufacturer = [];
         _loading = false;
-        _errorMessage = e.toString();
+        _errorMessage = toUserFacingApiError(e).displayText;
       });
     }
   }

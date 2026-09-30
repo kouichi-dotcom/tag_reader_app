@@ -149,7 +149,8 @@ String _dbKindToLabel(String kind) {
   }
 }
 
-/// 更新禁止か。
+/// 更新禁止か（後方互換・staging の readOnly 判定の土台）。
+/// product-updates / tag-ledger / link-tags は各専用フラグを使う。
 /// - prod Flavor → 常に true（/api/environment 無視）
 /// - それ以外 → API readOnly==true なら true。未取得時は false（更新可）
 bool get kUpdatesForbidden {
@@ -160,6 +161,30 @@ bool get kUpdatesForbidden {
 
 /// 後方互換: UI / api_client が参照。意味は [kUpdatesForbidden] と同じ。
 bool get kIsProductionDb => kUpdatesForbidden;
+
+/// product-updates のみの更新禁止か。
+/// - prod Flavor → false（許可。最終可否は API の Writes__ProductUpdates）
+/// - それ以外 → [kUpdatesForbidden] と同じ（staging は API readOnly に従う）
+bool get kProductUpdatesForbidden {
+  if (kIsProdFlavor) return false;
+  return kUpdatesForbidden;
+}
+
+/// tag-ledger のみの更新禁止か。
+/// - prod Flavor → false（許可。最終可否は API の Writes__TagLedger）
+/// - それ以外 → [kUpdatesForbidden] と同じ（staging は API readOnly に従う）
+bool get kTagLedgerForbidden {
+  if (kIsProdFlavor) return false;
+  return kUpdatesForbidden;
+}
+
+/// link-tags のみの更新禁止か。
+/// - prod Flavor → false（許可。最終可否は API の Writes__LinkTags）
+/// - それ以外 → [kUpdatesForbidden] と同じ（staging は API readOnly に従う）
+bool get kLinkTagsForbidden {
+  if (kIsProdFlavor) return false;
+  return kUpdatesForbidden;
+}
 
 /// ヘッダー表示用: 「(テストDB)」「(本番DB)」「(ローカルDB)」など
 String get kDbLabel {

@@ -10,6 +10,7 @@ import '../services/radio_power_storage.dart';
 import '../services/tag_ledger_cache.dart';
 import '../services/tag_reader_service.dart';
 import '../theme/app_design.dart';
+import '../utils/api_error_presenter.dart';
 import '../utils/epc_generator.dart';
 import '../widgets/main_flow_nav_bar.dart';
 import '../widgets/reader_not_connected_dialog.dart';
@@ -215,10 +216,11 @@ class _TagIdResetScreenState extends State<TagIdResetScreen> {
         throw StateError('一意な EPC を確保できませんでした');
       }
       newEpc = found;
-    } catch (e) {
+    } catch (e, st) {
+      logApiError(e, apiName: 'epc-generate', stackTrace: st);
       await _restoreUserPower();
       if (mounted) setState(() => _isBusy = false);
-      _snack('$e');
+      _snack(toUserFacingApiError(e).displayText);
       return;
     }
 

@@ -625,7 +625,7 @@ class _SlipLinkConfirmDialogState extends State<_SlipLinkConfirmDialog> {
       showAppNotification(context, 'API 未接続のため送信できません。');
       return;
     }
-    if (kIsProductionDb) {
+    if (kLinkTagsForbidden) {
       showAppNotification(context, '本番DBでは読み取り専用のため送信できません。');
       return;
     }
@@ -647,10 +647,10 @@ class _SlipLinkConfirmDialogState extends State<_SlipLinkConfirmDialog> {
       );
       if (!mounted) return;
       widget.onSubmitted();
-    } catch (e) {
+    } catch (e, st) {
       if (!mounted) return;
       setState(() => _sending = false);
-      showAppNotification(context, '送信に失敗しました。\n$e');
+      showAppApiError(context, e, apiName: 'reception-slips/link-tags', stackTrace: st);
     }
   }
 

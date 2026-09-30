@@ -7,6 +7,7 @@ import '../config/api_config.dart';
 import '../models/inventory_item.dart';
 import '../models/product_category.dart';
 import '../screens/inventory_units_screen.dart';
+import '../utils/api_error_presenter.dart';
 import '../zaicon/zaicon_constants.dart';
 
 /// InventoryList.tsx 相当
@@ -64,12 +65,13 @@ class _ZaiconInventoryBodyState extends State<ZaiconInventoryBody> {
         _categories = cats;
         _loadingCategories = false;
       });
-    } catch (e) {
+    } catch (e, st) {
+      logApiError(e, apiName: 'products/categories', stackTrace: st);
       if (!mounted) return;
       setState(() {
         _categories = [];
         _loadingCategories = false;
-        _categoriesError = e.toString();
+        _categoriesError = toUserFacingApiError(e).displayText;
       });
     }
   }
@@ -88,12 +90,13 @@ class _ZaiconInventoryBodyState extends State<ZaiconInventoryBody> {
         _items = inventory.where((e) => e.id.trim() != _kExcludedProductCode).toList();
         _loadingInventory = false;
       });
-    } catch (e) {
+    } catch (e, st) {
+      logApiError(e, apiName: 'products/inventory', stackTrace: st);
       if (!mounted || generation != _inventoryLoadGeneration) return;
       setState(() {
         _items = [];
         _loadingInventory = false;
-        _inventoryError = e.toString();
+        _inventoryError = toUserFacingApiError(e).displayText;
       });
     }
   }
@@ -392,12 +395,6 @@ class _ZaiconInventoryBodyState extends State<ZaiconInventoryBody> {
                       _categoriesError!,
                       textAlign: TextAlign.center,
                       style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'API: $kApiBaseUrl',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
                     ),
                     const SizedBox(height: 20),
                     FilledButton.icon(

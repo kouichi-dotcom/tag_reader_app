@@ -6,6 +6,7 @@ import '../config/api_config.dart';
 import '../services/employee_cache.dart';
 import '../services/employee_storage.dart';
 import '../theme/app_design.dart';
+import '../utils/api_error_presenter.dart';
 import '../widgets/main_flow_nav_bar.dart';
 
 /// 従業員コード入力画面
@@ -70,11 +71,12 @@ class _EmployeeCodeScreenState extends State<EmployeeCodeScreen> {
         setState(() => _saving = false);
         Navigator.of(context).pop(true);
       }
-    } catch (e) {
+    } catch (e, st) {
+      logApiError(e, apiName: 'employees', stackTrace: st);
       if (mounted) {
         setState(() {
           _saving = false;
-          _errorMessage = '通信エラー: $e';
+          _errorMessage = toUserFacingApiError(e).displayText;
         });
       }
     }
