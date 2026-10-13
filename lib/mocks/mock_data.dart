@@ -254,14 +254,16 @@ final List<MockSlip> mockSlips = [
 /// Android / iOS 実機向け：API なしで伝票一覧・経路案内を試す用。
 /// latLng は「緯度,経度」。経路案内ボタンで Google マップがこの座標を目的地に開く。
 /// 座標を変えたいときはここを編集する。
+/// dueDate は期日の直近1ヶ月フィルタ内に入るよう「いま」基準。
 final List<ReceptionSlip> mockReceptionSlips = [
   ReceptionSlip(
     receptionNo: 'MOCK-ROUTE-001',
     subject: 'レンタル機材納品',
     customerName: '株式会社サンプル建設',
     siteName: '東京駅付近（経路案内テスト）',
+    dueDate: DateTime.now(),
     memo: '経路案内テスト用（東京駅）',
-    receptionAt: DateTime(2025, 2, 19, 10, 30),
+    receptionAt: DateTime.now().subtract(const Duration(hours: 2)),
     handlerCode: '001',
     handlerName: '山田太郎',
     // 東京駅
@@ -275,8 +277,9 @@ final List<ReceptionSlip> mockReceptionSlips = [
     subject: '返却受入',
     customerName: '△△商事',
     siteName: '渋谷スクランブル交差点付近（経路案内テスト）',
+    dueDate: DateTime.now().subtract(const Duration(hours: 5)),
     memo: '経路案内テスト用（渋谷）',
-    receptionAt: DateTime(2025, 2, 19, 9, 15),
+    receptionAt: DateTime.now().subtract(const Duration(hours: 5)),
     handlerCode: '001',
     handlerName: '山田太郎',
     // 渋谷スクランブル交差点
@@ -290,8 +293,9 @@ final List<ReceptionSlip> mockReceptionSlips = [
     subject: '新規レンタル',
     customerName: '□□運輸',
     siteName: '那覇空港付近（経路案内テスト）',
+    dueDate: DateTime.now().subtract(const Duration(days: 1)),
     memo: '経路案内テスト用（那覇）',
-    receptionAt: DateTime(2025, 2, 18, 16, 0),
+    receptionAt: DateTime.now().subtract(const Duration(days: 1, hours: 4)),
     handlerCode: '002',
     handlerName: '佐藤花子',
     // 那覇空港付近（API コメント例に近い座標）
@@ -305,8 +309,9 @@ final List<ReceptionSlip> mockReceptionSlips = [
     subject: '納品・点検',
     customerName: '〇〇建材',
     siteName: '位置情報なし（ネガティブテスト）',
+    dueDate: DateTime.now().subtract(const Duration(days: 2)),
     memo: 'latLng 未設定 → 「位置情報が記録されていません」になること',
-    receptionAt: DateTime(2025, 2, 18, 14, 0),
+    receptionAt: DateTime.now().subtract(const Duration(days: 2)),
     handlerCode: '002',
     handlerName: '佐藤花子',
     latLng: null,
@@ -319,8 +324,9 @@ final List<ReceptionSlip> mockReceptionSlips = [
     subject: '来店(納品)',
     customerName: '来店テスト株式会社',
     siteName: '来店（経路案内ボタン非表示の確認用）',
-    memo: '用件が来店 → 全伝票一覧から開いても経路案内ボタンが出ないこと（送信は配達と同じ納品モード）',
-    receptionAt: DateTime(2025, 2, 17, 11, 0),
+    dueDate: DateTime.now().subtract(const Duration(days: 3)),
+    memo: '用件が来店 → 来店伝票一覧用。全伝票一覧（来店以外）には出ない',
+    receptionAt: DateTime.now().subtract(const Duration(days: 3, hours: 2)),
     handlerCode: '001',
     handlerName: '山田太郎',
     latLng: '35.681236,139.767125',
@@ -333,8 +339,9 @@ final List<ReceptionSlip> mockReceptionSlips = [
     subject: '来店(返品)',
     customerName: '来店返品テスト株式会社',
     siteName: '来店（返品・引取と同じ処理）',
+    dueDate: DateTime.now().subtract(const Duration(days: 3)),
     memo: '用件が来店(返品) → 引取と同じ返品モードで tag_mode2=在庫 / tag_mode=返品',
-    receptionAt: DateTime(2025, 2, 17, 14, 30),
+    receptionAt: DateTime.now().subtract(const Duration(days: 3)),
     handlerCode: '002',
     handlerName: '佐藤花子',
     latLng: null,
@@ -348,9 +355,32 @@ final List<ReceptionSlip> mockReceptionSlips = [
 List<ReceptionSlip> mockReceptionSlipsForFilter(SlipListFilter filter) {
   Iterable<ReceptionSlip> list = mockReceptionSlips;
 
+  // API と同様: キャンセル系用件は常に非表示
+  const hiddenCancelSubjects = {
+    'ｷｬﾝｾﾙ(配達)',
+    'ｷｬﾝｾﾙ(引取)',
+    'ｷｬﾝｾﾙ',
+  };
+  list = list.where((s) => !hiddenCancelSubjects.contains(s.subject));
+
+  // API と同様: 期日の直近1ヶ月（カレンダー月）
+  final today = DateTime.now();
+  final minDate = DateTime(today.year, today.month - 1, today.day);
+  final maxDate = DateTime(today.year, today.month, today.day + 1);
+  list = list.where((s) {
+    final due = s.dueDate;
+    if (due == null) return false;
+    return !due.isBefore(minDate) && due.isBefore(maxDate);
+  });
+
   final subjects = filter.subjectFilter;
   if (subjects != null && subjects.isNotEmpty) {
     list = list.where((s) => subjects.contains(s.subject));
+  }
+
+  final excludeSubjects = filter.excludeSubjectFilter;
+  if (excludeSubjects != null && excludeSubjects.isNotEmpty) {
+    list = list.where((s) => !excludeSubjects.contains(s.subject));
   }
 
   final code = filter.assigneeCode?.trim();
@@ -360,8 +390,8 @@ List<ReceptionSlip> mockReceptionSlipsForFilter(SlipListFilter filter) {
 
   final sorted = list.toList()
     ..sort((a, b) {
-      final at = a.receptionAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-      final bt = b.receptionAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final at = a.dueDate ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bt = b.dueDate ?? DateTime.fromMillisecondsSinceEpoch(0);
       return bt.compareTo(at);
     });
   final offset = filter.offset < 0 ? 0 : filter.offset;

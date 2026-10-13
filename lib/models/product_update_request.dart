@@ -9,7 +9,7 @@ class ProductUpdateRequest {
   final Map<String, dynamic> changes; // 在庫・ステータス・メモ等
   final String? deviceId;
   final String? userId;
-  /// 保管場所（1=本社, 2=山川, 3=東風平, 4=友寄）。テスト環境でのみ [ICタグ台帳].tag_mode に反映。
+  /// 保管場所コード（1=本社, 2=山川, 3=東風平, 4=友寄）。指定時のみ [ICタグ台帳].[保管場所コード] を更新。
   final int? storageLocation;
 
   const ProductUpdateRequest({

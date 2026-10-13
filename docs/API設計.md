@@ -63,7 +63,8 @@ JSON オブジェクト:
 
 ### 説明
 
-変更した商品データ（主にステータス）を送信し、[ICタグ台帳] の `tag_mode2` と `updated` を更新。あわせて [tag_table4] に更新ログを1件挿入する。
+変更した商品データ（主にステータス）を送信し、[ICタグ台帳] の `tag_mode2` と `updated` を更新。`storage_location` 指定時は `[保管場所コード]` も更新。あわせて [tag_table4] に更新ログを1件挿入する。  
+保管場所には `tag_mode` を使わない（`保管場所コード` のみ）。
 
 ### リクエスト Body（JSON）
 
@@ -75,6 +76,7 @@ JSON オブジェクト:
 | user_id | string | - | 担当者コード（従業員コード）。整数に変換できれば tag_table4.s_code に記録 |
 | product_id | string | - | 未使用可 |
 | device_id | string | - | 未使用可 |
+| storage_location | int | - | 保管場所コード（1=本社, 2=山川, 3=東風平, 4=友寄）。指定時のみ `[保管場所コード]` を更新 |
 
 例:
 
@@ -83,7 +85,8 @@ JSON オブジェクト:
   "epc": "e2000017690c003116706a0f",
   "read_at": "2026-02-24 16:00:00",
   "changes": { "status": "修理中" },
-  "user_id": "123"
+  "user_id": "123",
+  "storage_location": 2
 }
 ```
 
@@ -92,12 +95,13 @@ JSON オブジェクト:
 1. ** [ICタグ台帳]** を更新  
    - `WHERE LTRIM(RTRIM([tag_id2])) = @epc`  
    - `SET [tag_mode2] = @status`  
+   - `SET [保管場所コード] = @storageLocationCode`（`storage_location` が 1〜4 のときのみ）  
    - `SET [updated] = CONVERT(DATETIME, CONVERT(VARCHAR(19), GETDATE(), 120), 120)`（秒単位）
 
 2. **[tag_table4]** に1行 INSERT  
    - read_time: サーバー現在時刻（秒単位）  
    - tag_id2: epc  
-   - tag_mode: 送信した status  
+   - tag_mode: 送信した status（ステータス履歴。保管場所ではない）  
    - s_code: user_id を int にした値（不可なら NULL）  
    - 受付番号: 0, mark: 0, complete: 1, Remarks: NULL
 

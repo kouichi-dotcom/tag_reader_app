@@ -55,6 +55,20 @@ class ReceptionSlip {
     return '--';
   }
 
+  /// 一覧用の会社名。「その他」がある場合はそちらを優先する。
+  String get listCustomerName {
+    final other = customerNameOther?.trim() ?? '';
+    if (other.isNotEmpty) return other;
+    return customerName;
+  }
+
+  /// 一覧用の現場名。「その他」がある場合はそちらを優先する（現場コード 99999 等）。
+  String get listSiteName {
+    final other = siteNameOther?.trim() ?? '';
+    if (other.isNotEmpty) return other;
+    return siteName;
+  }
+
   static List<ReceptionDetailItem> _parseDetails(dynamic raw) {
     if (raw == null || raw is! List) return const [];
     return raw

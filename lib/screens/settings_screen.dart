@@ -52,7 +52,7 @@ class SettingsScreen extends StatelessWidget {
                       ListTile(
                         leading: const Icon(Icons.warehouse, color: Color(0xFFFF9800)),
                         title: const Text('保管場所選択'),
-                        subtitle: const Text('ICタグ更新時の保管場所'),
+                        subtitle: const Text('手動 / GPS自動判定の設定'),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () {
                           Navigator.of(context).push(
@@ -79,8 +79,8 @@ class SettingsScreen extends StatelessWidget {
                       ),
                       ListTile(
                         leading: const Icon(Icons.tune, color: Color(0xFF8BC34A)),
-                        title: const Text('出力詳細設定'),
-                        subtitle: const Text('電波強度（dBm）の手動調整'),
+                        title: const Text('出力設定'),
+                        subtitle: const Text('出力モード・電波強度の調整'),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () {
                           Navigator.of(context).push(

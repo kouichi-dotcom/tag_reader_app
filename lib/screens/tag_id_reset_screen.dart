@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../config/api_config.dart';
 import '../models/inventory_epc.dart';
+import '../models/operation_history.dart';
+import '../services/operation_history_service.dart';
 import '../services/product_cache.dart';
 import '../services/radio_power_storage.dart';
 import '../services/tag_ledger_cache.dart';
@@ -386,6 +388,21 @@ class _TagIdResetScreenState extends State<TagIdResetScreen> {
     final verified = await _verifyWrittenEpc(newEpc);
 
     await _restoreUserPower();
+
+    await OperationHistoryService.instance.recordEpcUpdate(
+      resultStatus: verified
+          ? HistoryResultStatus.success
+          : HistoryResultStatus.failed,
+      errorMessage: verified ? null : '再読取による書込み確認に失敗',
+      item: OperationHistoryItem(
+        epc: newEpc,
+        epcBefore: currentEpc,
+        epcAfter: newEpc,
+        resultStatus:
+            verified ? ItemResultStatus.success : ItemResultStatus.failed,
+        errorMessage: verified ? null : '再読取による書込み確認に失敗',
+      ),
+    );
 
     if (!mounted) return;
     setState(() => _isBusy = false);

@@ -112,9 +112,17 @@ class SlipLinkPopResult {
   const SlipLinkPopResult({
     required this.products,
     this.submitted = false,
+    this.linked = 0,
+    this.deliveryReturnUpdated = 0,
+    this.warnings = const [],
   });
 
   final List<MockLinkProduct> products;
   /// true: 確認画面から API 送信済み
   final bool submitted;
+  /// API が紐付け（INSERT）した件数
+  final int linked;
+  /// 引取／来店(返品)で納品明細の [返却] を 1 にした件数
+  final int deliveryReturnUpdated;
+  final List<String> warnings;
 }

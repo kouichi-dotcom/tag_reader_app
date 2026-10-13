@@ -7,7 +7,7 @@ import '../widgets/app_notification.dart';
 import '../widgets/main_flow_nav_bar.dart';
 import 'slip_list_screen.dart';
 
-/// 伝票読込画面。担当伝票・全伝票・来店伝票のいずれかを選んで一覧へ進む。
+/// 伝票読込画面。担当伝票・全伝票（来店以外）・来店伝票のいずれかを選んで一覧へ進む。
 class SlipLoadScreen extends StatelessWidget {
   const SlipLoadScreen({super.key, this.showBackButton = true});
 
@@ -70,19 +70,19 @@ class SlipLoadScreen extends StatelessWidget {
                               ),
                               const SizedBox(height: 16),
                               _MenuButton(
-                                label: '全伝票一覧',
+                                label: '全伝票一覧（来店以外）',
                                 backgroundColor: const Color(0xFFFCE4EC),
                                 textColor: const Color(0xFFB71C1C),
                                 onPressed: () {
-                                  // 日付指定なし・受付日時の新しい順で最新10件（転記済=0のみ）
+                                  // 日付指定なし・期日の新しい順（確認=0、期日の直近1ヶ月、来店除外）
                                   Navigator.of(context).push(
                                     MaterialPageRoute<void>(
                                       builder: (_) => SlipListScreen(
                                         showBackButton: true,
-                                        listTitle: '全伝票一覧',
-                                        filter: SlipListFilter.all,
+                                        listTitle: '全伝票一覧（来店以外）',
+                                        filter: SlipListFilter.allNonVisit,
                                         subjectFilterOptions:
-                                            SlipListScreen.allSubjectFilterOptions,
+                                            SlipListScreen.nonVisitSubjectFilterOptions,
                                       ),
                                     ),
                                   );

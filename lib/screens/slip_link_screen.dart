@@ -6,6 +6,7 @@ import '../api/api_client.dart';
 import '../config/api_config.dart';
 import '../mocks/mock_data.dart';
 import '../models/inventory_epc.dart';
+import '../models/operation_history.dart';
 import '../models/product_by_epc.dart';
 import '../models/reception_slip.dart';
 import '../models/slip_link_match.dart';
@@ -14,10 +15,12 @@ import '../services/employee_cache.dart';
 import '../services/employee_storage.dart';
 import '../services/hardware_trigger_handler.dart';
 import '../services/hardware_trigger_mode_storage.dart';
+import '../services/operation_history_service.dart';
 import '../services/product_cache.dart';
 import '../services/tag_ledger_cache.dart';
 import '../services/tag_reader_service.dart';
 import '../theme/app_design.dart';
+import '../utils/slip_link_status_resolver.dart';
 import '../widgets/app_notification.dart';
 import '../widgets/main_flow_nav_bar.dart';
 import '../widgets/reader_not_connected_dialog.dart';
@@ -271,11 +274,17 @@ class _SlipLinkScreenState extends State<SlipLinkScreen> {
             SlipLinkPopResult(products: selected, submitted: false),
           );
         },
-        onSubmitted: () {
+        onSubmitted: (apiResult) {
           Navigator.pop(ctx);
           Navigator.pop(
             context,
-            SlipLinkPopResult(products: selected, submitted: true),
+            SlipLinkPopResult(
+              products: selected,
+              submitted: true,
+              linked: apiResult.linked,
+              deliveryReturnUpdated: apiResult.deliveryReturnUpdated,
+              warnings: apiResult.warnings,
+            ),
           );
         },
       ),
@@ -598,7 +607,7 @@ class _SlipLinkConfirmDialog extends StatefulWidget {
   final List<MockLinkProduct> selected;
   final VoidCallback onRevise;
   final VoidCallback onSaveWithoutSend;
-  final VoidCallback onSubmitted;
+  final void Function(SlipTagLinkResult apiResult) onSubmitted;
 
   @override
   State<_SlipLinkConfirmDialog> createState() => _SlipLinkConfirmDialogState();
@@ -634,6 +643,28 @@ class _SlipLinkConfirmDialogState extends State<_SlipLinkConfirmDialog> {
     try {
       final userId = await EmployeeStorage.getCode();
       final api = ApiClient(baseUrl: kApiBaseUrl);
+      final slip = widget.slip;
+      final statusAfter = SlipLinkStatusResolver.statusAfter(
+        subject: slip.subject,
+        linkMode: widget.linkMode,
+      );
+      final tagMode = SlipLinkStatusResolver.tagMode(
+        subject: slip.subject,
+        linkMode: widget.linkMode,
+      );
+      final historyItems = widget.selected
+          .map(
+            (p) => OperationHistoryItem(
+              epc: p.id,
+              productCode: p.code,
+              number: p.number?.toString(),
+              productName: p.name,
+              statusAfter: statusAfter,
+              tagMode: tagMode,
+              resultStatus: ItemResultStatus.success,
+            ),
+          )
+          .toList();
       final request = SlipTagLinkRequest(
         userId: userId,
         linkMode: widget.linkMode,
@@ -641,13 +672,62 @@ class _SlipLinkConfirmDialogState extends State<_SlipLinkConfirmDialog> {
             .map((p) => SlipTagLinkItem(epc: p.id, productCode: p.code))
             .toList(),
       );
-      await api.submitSlipTagLinks(
-        receptionNo: widget.slip.receptionNo,
+      final result = await api.submitSlipTagLinks(
+        receptionNo: slip.receptionNo,
         request: request,
       );
+      final warningText =
+          result.warnings.isEmpty ? null : result.warnings.join('\n');
+      await OperationHistoryService.instance.recordSlipLink(
+        items: historyItems,
+        resultStatus: HistoryResultStatus.success,
+        receptionNo: slip.receptionNo,
+        companyName: slip.customerName,
+        siteName: slip.siteName,
+        subject: slip.subject,
+        linkMode: widget.linkMode,
+        userId: userId,
+        errorMessage: warningText,
+      );
       if (!mounted) return;
-      widget.onSubmitted();
+      widget.onSubmitted(result);
     } catch (e, st) {
+      final slip = widget.slip;
+      final statusAfter = SlipLinkStatusResolver.statusAfter(
+        subject: slip.subject,
+        linkMode: widget.linkMode,
+      );
+      final tagMode = SlipLinkStatusResolver.tagMode(
+        subject: slip.subject,
+        linkMode: widget.linkMode,
+      );
+      final errMsg = OperationHistoryService.errorMessageOf(e);
+      final httpStatus = OperationHistoryService.httpStatusOf(e);
+      await OperationHistoryService.instance.recordSlipLink(
+        items: widget.selected
+            .map(
+              (p) => OperationHistoryItem(
+                epc: p.id,
+                productCode: p.code,
+                number: p.number?.toString(),
+                productName: p.name,
+                statusAfter: statusAfter,
+                tagMode: tagMode,
+                resultStatus: ItemResultStatus.failed,
+                httpStatus: httpStatus,
+                errorMessage: errMsg,
+              ),
+            )
+            .toList(),
+        resultStatus: HistoryResultStatus.failed,
+        httpStatus: httpStatus,
+        errorMessage: errMsg,
+        receptionNo: slip.receptionNo,
+        companyName: slip.customerName,
+        siteName: slip.siteName,
+        subject: slip.subject,
+        linkMode: widget.linkMode,
+      );
       if (!mounted) return;
       setState(() => _sending = false);
       showAppApiError(context, e, apiName: 'reception-slips/link-tags', stackTrace: st);

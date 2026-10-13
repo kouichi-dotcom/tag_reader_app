@@ -231,7 +231,8 @@ class ApiClient {
         .toList();
   }
 
-  /// 変更した商品データを送信（POST /api/product-updates）。DB の [ICタグ台帳].tag_mode2 を更新。
+  /// 変更した商品データを送信（POST /api/product-updates）。
+  /// [ICタグ台帳].tag_mode2 を更新。storage_location 指定時は [保管場所コード] も更新。
   /// staging は API readOnly 時のみ呼び出し不可。prod はアプリ側で許可（最終可否は API Writes）。
   Future<void> submitProductUpdate(ProductUpdateRequest request) async {
     const apiName = 'product-updates';
@@ -307,7 +308,7 @@ class ApiClient {
 
   /// 受付伝票にタグを紐付けて送信（POST /api/reception-slips/{receptionNo}/link-tags）。
   /// 用件に応じて [ICタグ台帳].tag_mode2 / [tag_table3].tag_mode・complete を更新する。
-  /// 配達・来店(納品)=納品、引取・来店(返品)=返品。用件「交換」のときは [SlipTagLinkRequest.linkMode] 必須。
+  /// 配達・来店(納品)=納品、引取・来店(返品)=返品＋納品明細[返却]=1。用件「交換」のときは [SlipTagLinkRequest.linkMode] 必須。
   /// staging は API readOnly 時のみ呼び出し不可。prod はアプリ側で許可（最終可否は API Writes）。
   Future<SlipTagLinkResult> submitSlipTagLinks({
     required String receptionNo,
@@ -373,6 +374,10 @@ class ApiClient {
     }
     if (filter.subjectFilter != null && filter.subjectFilter!.isNotEmpty) {
       queryParams['subjects'] = filter.subjectFilter!.join(',');
+    }
+    if (filter.excludeSubjectFilter != null &&
+        filter.excludeSubjectFilter!.isNotEmpty) {
+      queryParams['excludeSubjects'] = filter.excludeSubjectFilter!.join(',');
     }
     queryParams['limit'] = filter.limit.toString();
     queryParams['offset'] = filter.offset.toString();

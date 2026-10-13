@@ -46,11 +46,14 @@ class SlipTagLinkItem {
 class SlipTagLinkResult {
   final String receptionNo;
   final int linked;
+  /// 引取／来店(返品)で納品明細の [返却] を 1 にした行数。他用件は 0。
+  final int deliveryReturnUpdated;
   final List<String> warnings;
 
   const SlipTagLinkResult({
     required this.receptionNo,
     required this.linked,
+    this.deliveryReturnUpdated = 0,
     this.warnings = const [],
   });
 
@@ -59,6 +62,8 @@ class SlipTagLinkResult {
     return SlipTagLinkResult(
       receptionNo: json['receptionNo']?.toString() ?? '',
       linked: (json['linked'] as num?)?.toInt() ?? 0,
+      deliveryReturnUpdated:
+          (json['deliveryReturnUpdated'] as num?)?.toInt() ?? 0,
       warnings: warningsRaw is List
           ? warningsRaw.map((e) => e.toString()).toList()
           : const [],

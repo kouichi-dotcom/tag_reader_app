@@ -6,6 +6,47 @@ Cursorで実施した開発内容を記録する。
 
 ## 作業記録
 
+### 2026-10-08 — 急ぎ来店納品 UI（統合画面＋伝票選択〜確認〜送信）
+
+- **目的**: 伝票なしで先にタグ読取 → 当日未処理から複数選択 → 伝票選択 → 再確認 → 送信、の操作イメージ（API/DB 未接続）
+- **ホーム**: 「急ぎ来店納品」＋補足＋未処理 N点（メモリ上の当日件数）
+- **画面**
+  - `urgent_store_delivery_screen` … 接続状態・本日未処理一覧・チェック選択・「伝票を選択」
+  - `urgent_store_delivery_slip_select_screen` … ダミー伝票一覧 →「確認へ進む」
+  - `urgent_store_delivery_confirm_screen` … 伝票＋商品の再確認 →「送信」（仮）→ 統合画面へ戻る
+- **セッション**: `UrgentStoreDeliverySession`（アプリ内メモリ。送信後は選択商品を一覧から除去）
+- **削除**: 旧読取完了／未処理一覧／詳細の分離画面
+- **Git**: 未コミット
+
+### 2026-10-08 — 急ぎ来店納品 UI（初期版・画面分離） ※上記で置き換え
+
+- 読取／完了／未処理一覧を分離した初版。統合フローへ再設計。
+
+### 2026-10-07 — 保管場所設定: 手動 / GPS自動判定の切替
+
+- **画面**: `storage_location_screen` を 4 ボタン廃止 → 現在の保管場所表示 + SegmentedButton（GPS/手動）+ 手動時のみドロップダウン
+- **保持**: `StorageLocationStorage` に mode / 手動選択 / DB直近コード（SharedPreferences）
+- **タグ更新**: 手動時は GPS なしで選択コードを `storage_location` 送信。GPS時は既存判定のまま
+- **設定字幕**: 「手動 / GPS自動判定の設定」
+- **Git**: 未コミット
+
+### 2026-10-07 — GPS による保管場所判定（完成: 実座標 + tag_mode 不使用の確定）
+
+- **目的**: タグ更新時に GPS で拠点を判定し、`ICタグ台帳.保管場所コード` と異なるときだけ確認して更新する
+- **確定方針**: 保管場所は必ず `[保管場所コード]`。`tag_mode` / `tag_mode2` は保管場所に使わない（ステータス等の本来用途のみ）
+- **DB（TagReaderApi）**
+  - `scripts/sql/add-ic-tag-ledger-storage-location-code.sql` … `[保管場所コード] int NULL` を安全追加
+  - 値: 1=本社, 2=山川, 3=東風平, 4=友寄
+- **API**
+  - `ProductUpdatesController` … `storage_location` → `[保管場所コード]` のみ更新（`tag_mode` へは書かない）
+  - `ProductsController` / `ProductResponse` … `storageLocationCode` 取得
+- **アプリ**
+  - `StorageLocationCatalog` に4拠点の実座標を設定
+  - `StorageLocationGpsService`（200m・5分キャッシュ）、確認ダイアログ、`tag_list_screen` 送信フロー
+  - 手動保管場所選択はホーム表示用（DB 更新は GPS 確認後のみ）
+- **テスト**: `test/storage_location_gps_test.dart`（実座標判定・距離・5分キャッシュ）
+- **Git**: 未コミット（明示依頼まで待機）
+
 ### 2026-09-29 — API通信エラーのユーザー向け表示を改善
 
 - **目的**: 利用者画面から技術詳細（SocketException / ClientException / URL 等）を除去し、日本語の案内に統一。開発時のみ Debug Console に詳細を残す

@@ -1,11 +1,26 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'config/api_config.dart';
 import 'screens/home_screen.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  _initSqliteForDesktop();
   runApp(const TagReaderApp());
+}
+
+/// Windows / Linux / macOS では sqflite_common_ffi を使う。
+void _initSqliteForDesktop() {
+  if (kIsWeb) return;
+  if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  }
 }
 
 class TagReaderApp extends StatelessWidget {

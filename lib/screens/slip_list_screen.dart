@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../api/api_client.dart';
 import '../config/api_config.dart';
 import '../mocks/mock_data.dart';
+import '../models/operation_history.dart';
 import '../models/reception_slip.dart';
 import '../models/slip_list_filter.dart';
 import '../models/reception_detail_item.dart';
@@ -13,9 +14,11 @@ import '../models/slip_link_match.dart';
 import '../models/slip_tag_link_request.dart';
 import '../services/employee_cache.dart';
 import '../services/employee_storage.dart';
+import '../services/operation_history_service.dart';
 import '../services/product_cache.dart';
 import '../theme/app_design.dart';
 import '../utils/api_error_presenter.dart';
+import '../utils/slip_link_status_resolver.dart';
 import '../widgets/app_notification.dart';
 import '../widgets/main_flow_nav_bar.dart';
 import 'slip_link_screen.dart';
@@ -35,10 +38,11 @@ class SlipListScreen extends StatefulWidget {
   final String? listTitle;
   /// 取得条件。省略時は全伝票（SlipListFilter.all）
   final SlipListFilter? filter;
-  /// 用件絞り込みボタン（null / 空なら非表示）。全伝票・担当は [allSubjectFilterOptions]、来店は [visitSubjectFilterOptions]
+  /// 用件絞り込みボタン（null / 空なら非表示）。
+  /// 担当=[allSubjectFilterOptions]、全伝票（来店以外）=[nonVisitSubjectFilterOptions]、来店=[visitSubjectFilterOptions]
   final List<({String label, String value})>? subjectFilterOptions;
 
-  /// 全伝票・担当伝票用の用件ボタン
+  /// 担当伝票用の用件ボタン（キャンセル系は API 側で常時非表示のためボタンなし）
   static const List<({String label, String value})> allSubjectFilterOptions = [
     (label: '配達', value: '<配達>'),
     (label: '引取', value: '引取'),
@@ -46,10 +50,16 @@ class SlipListScreen extends StatefulWidget {
     (label: '来店（納品）', value: '来店(納品)'),
     (label: '来店（返品）', value: '来店(返品)'),
     (label: '連絡', value: '連絡'),
-    (label: 'キャンセル', value: 'ｷｬﾝｾﾙ'),
     (label: '点検', value: '点検'),
-    (label: 'キャンセル（配達）', value: 'ｷｬﾝｾﾙ(配達)'),
-    (label: 'キャンセル（引取）', value: 'ｷｬﾝｾﾙ(引取)'),
+  ];
+
+  /// 全伝票一覧（来店以外）用の用件ボタン
+  static const List<({String label, String value})> nonVisitSubjectFilterOptions = [
+    (label: '配達', value: '<配達>'),
+    (label: '引取', value: '引取'),
+    (label: '交換', value: '交換'),
+    (label: '連絡', value: '連絡'),
+    (label: '点検', value: '点検'),
   ];
 
   /// 来店伝票一覧用の用件ボタン
@@ -68,7 +78,7 @@ class _SlipListScreenState extends State<SlipListScreen> {
   bool _fetching = false;
   bool _loadingMore = false;
   bool _hasMore = true;
-  /// 受付台帳APIから取得した伝票（受付日時の新しい順）
+  /// 受付台帳APIから取得した伝票（期日の新しい順）
   List<ReceptionSlip> _displaySlips = [];
   final Set<String> _linkedSlipIds = {};
   final Map<String, List<MockLinkProduct>> _linkedProductsBySlipId = {};
@@ -86,6 +96,13 @@ class _SlipListScreenState extends State<SlipListScreen> {
       widget.subjectFilterOptions != null &&
       widget.subjectFilterOptions!.isNotEmpty;
 
+  /// 来店伝票一覧（用件が来店のみ）かどうか。一覧行の表示を簡略化する。
+  bool get _isVisitSlipList {
+    final subjects = widget.filter?.subjectFilter;
+    if (subjects == null || subjects.isEmpty) return false;
+    return subjects.every(_isVisitSubject);
+  }
+
   /// 用件「交換」のみ（交換（配達）/ 交換（引取）は含めない）
   static bool _isExchangeSubject(String subject) => subject.trim() == '交換';
 
@@ -97,12 +114,12 @@ class _SlipListScreenState extends State<SlipListScreen> {
     return exchange.values.any((list) => list.isNotEmpty);
   }
 
-  /// 受付日時の新しい順（同日時は受付番号の大きい順）。null は末尾。
-  static List<ReceptionSlip> _sortedByReceptionAtDesc(List<ReceptionSlip> slips) {
+  /// 期日の新しい順（同期日は受付番号の大きい順）。null は末尾。
+  static List<ReceptionSlip> _sortedByDueDateDesc(List<ReceptionSlip> slips) {
     final list = List<ReceptionSlip>.from(slips);
     list.sort((a, b) {
-      final at = a.receptionAt;
-      final bt = b.receptionAt;
+      final at = a.dueDate;
+      final bt = b.dueDate;
       if (at == null && bt == null) {
         return b.receptionNo.compareTo(a.receptionNo);
       }
@@ -151,8 +168,10 @@ class _SlipListScreenState extends State<SlipListScreen> {
     final userId = await EmployeeStorage.getCode();
     final api = ApiClient(baseUrl: kApiBaseUrl);
     var successCount = 0;
+    var deliveryReturnTotal = 0;
     final errors = <String>[];
     final warningNotes = <String>[];
+    final successNotes = <String>[];
 
     try {
       for (final receptionNo in toSend) {
@@ -193,16 +212,98 @@ class _SlipListScreenState extends State<SlipListScreen> {
 
         var slipOk = true;
         for (final request in payloads) {
+          final products = request.items;
+          final statusAfter = SlipLinkStatusResolver.statusAfter(
+            subject: slip?.subject ?? '',
+            linkMode: request.linkMode,
+          );
+          final tagMode = SlipLinkStatusResolver.tagMode(
+            subject: slip?.subject ?? '',
+            linkMode: request.linkMode,
+          );
+          List<OperationHistoryItem> buildItems(ItemResultStatus status, {int? httpStatus, String? errorMessage}) {
+            return products.map((p) {
+              MockLinkProduct? matched;
+              if (isExchange) {
+                final byMode = _exchangeLinkedBySlipId[receptionNo] ?? {};
+                for (final list in byMode.values) {
+                  matched = list.cast<MockLinkProduct?>().firstWhere(
+                        (x) => x?.id == p.epc,
+                        orElse: () => null,
+                      );
+                  if (matched != null) break;
+                }
+              } else {
+                matched = (_linkedProductsBySlipId[receptionNo] ?? const [])
+                    .cast<MockLinkProduct?>()
+                    .firstWhere((x) => x?.id == p.epc, orElse: () => null);
+              }
+              return OperationHistoryItem(
+                epc: p.epc,
+                productCode: p.productCode ?? matched?.code,
+                number: matched?.number?.toString(),
+                productName: matched?.name,
+                statusAfter: statusAfter,
+                tagMode: tagMode,
+                resultStatus: status,
+                httpStatus: httpStatus,
+                errorMessage: errorMessage,
+              );
+            }).toList();
+          }
+
           try {
             final result = await api.submitSlipTagLinks(
               receptionNo: receptionNo,
               request: request,
             );
+            await OperationHistoryService.instance.recordSlipLink(
+              items: buildItems(ItemResultStatus.success),
+              resultStatus: HistoryResultStatus.success,
+              receptionNo: receptionNo,
+              companyName: slip?.listCustomerName,
+              siteName: slip?.listSiteName,
+              subject: slip?.subject,
+              linkMode: request.linkMode,
+              userId: userId,
+              errorMessage: result.warnings.isEmpty
+                  ? null
+                  : result.warnings.join('\n'),
+            );
+            deliveryReturnTotal += result.deliveryReturnUpdated;
+            if (SlipLinkStatusResolver.isPickupReturn(slip?.subject ?? '')) {
+              successNotes.add(
+                '[$receptionNo] 返却記録 ${result.deliveryReturnUpdated} 件'
+                '（紐付け ${result.linked} 件）',
+              );
+            }
             if (result.warnings.isNotEmpty) {
               final modeSuffix =
                   request.linkMode != null ? '/${request.linkMode}' : '';
+              final linkedForLabel = <MockLinkProduct>[];
+              if (isExchange) {
+                final byMode = _exchangeLinkedBySlipId[receptionNo] ?? {};
+                for (final list in byMode.values) {
+                  linkedForLabel.addAll(list);
+                }
+              } else {
+                linkedForLabel.addAll(
+                  _linkedProductsBySlipId[receptionNo] ?? const [],
+                );
+              }
+              final epcToLabel = <String, String>{
+                for (final p in linkedForLabel)
+                  p.id: SlipLinkStatusResolver.productDisplayLabel(
+                    name: p.name,
+                    code: p.code,
+                    number: p.number?.toString(),
+                  ),
+              };
               warningNotes.addAll(
-                result.warnings.map((w) => '[$receptionNo$modeSuffix] $w'),
+                SlipLinkStatusResolver.rewriteWarnings(
+                  result.warnings,
+                  epcToLabel,
+                ).map((w) => '[$receptionNo$modeSuffix] $w'),
               );
             }
           } catch (e, st) {
@@ -212,6 +313,24 @@ class _SlipListScreenState extends State<SlipListScreen> {
                 request.linkMode != null ? '/${request.linkMode}' : '';
             final userError = toUserFacingApiError(e);
             errors.add('[$receptionNo$modeSuffix] ${userError.title}: ${userError.message}');
+            final errMsg = OperationHistoryService.errorMessageOf(e);
+            final httpStatus = OperationHistoryService.httpStatusOf(e);
+            await OperationHistoryService.instance.recordSlipLink(
+              items: buildItems(
+                ItemResultStatus.failed,
+                httpStatus: httpStatus,
+                errorMessage: errMsg,
+              ),
+              resultStatus: HistoryResultStatus.failed,
+              httpStatus: httpStatus,
+              errorMessage: errMsg,
+              receptionNo: receptionNo,
+              companyName: slip?.listCustomerName,
+              siteName: slip?.listSiteName,
+              subject: slip?.subject,
+              linkMode: request.linkMode,
+              userId: userId,
+            );
           }
         }
 
@@ -231,13 +350,22 @@ class _SlipListScreenState extends State<SlipListScreen> {
 
     if (!mounted) return;
     if (errors.isEmpty) {
+      final detail = successNotes.isEmpty
+          ? ''
+          : '\n${successNotes.take(5).join('\n')}';
+      final returnSuffix = deliveryReturnTotal > 0
+          ? '\n納品明細の返却記録 合計: $deliveryReturnTotal 件'
+          : '';
       final warnSuffix = warningNotes.isEmpty
           ? ''
           : '\n警告: ${warningNotes.take(3).join(' / ')}'
               '${warningNotes.length > 3 ? ' …' : ''}';
       showAppNotification(
         context,
-        '$successCount 件の伝票を送信しました。$warnSuffix',
+        '$successCount 件の伝票を送信しました。$detail$returnSuffix$warnSuffix',
+        title: deliveryReturnTotal > 0
+            ? (warningNotes.isEmpty ? '返却処理完了' : '返却処理完了（警告あり）')
+            : (warningNotes.isEmpty ? '送信完了' : '送信完了（警告あり）'),
       );
     } else if (successCount == 0) {
       showAppNotification(
@@ -266,6 +394,7 @@ class _SlipListScreenState extends State<SlipListScreen> {
       unassignedOnly: base.unassignedOnly,
       random: false,
       subjectFilter: subjects,
+      excludeSubjectFilter: base.excludeSubjectFilter,
       limit: _pageSize,
       offset: offset,
     );
@@ -327,7 +456,7 @@ class _SlipListScreenState extends State<SlipListScreen> {
     final filter = _effectiveFilter(offset: offset);
 
     if (!kUseApi) {
-      final slips = _sortedByReceptionAtDesc(mockReceptionSlipsForFilter(filter));
+      final slips = _sortedByDueDateDesc(mockReceptionSlipsForFilter(filter));
       if (!mounted) return;
       setState(() {
         if (append) {
@@ -364,7 +493,7 @@ class _SlipListScreenState extends State<SlipListScreen> {
       final slips = await api.fetchReceptionSlips(filter: filter);
       if (!mounted) return;
 
-      final sorted = _sortedByReceptionAtDesc(slips);
+      final sorted = _sortedByDueDateDesc(slips);
       setState(() {
         if (append) {
           final existing = _displaySlips.map((s) => s.receptionNo).toSet();
@@ -488,8 +617,8 @@ class _SlipListScreenState extends State<SlipListScreen> {
                               final isSent = _sentSlipIds.contains(slip.receptionNo);
                               return _SlipRow(
                                 slip: slip,
-                                handlerDisplay: _resolvedHandlerDisplay(slip),
                                 getDetailDisplayName: _detailProductDisplay,
+                                isVisitList: _isVisitSlipList,
                                 isSelectedForSend: isSelectedForSend,
                                 isLinked: isLinked,
                                 isSent: isSent,
@@ -910,9 +1039,30 @@ class _SlipListScreenState extends State<SlipListScreen> {
         }
       });
       if (result.submitted) {
+        final epcToLabel = <String, String>{
+          for (final p in result.products)
+            p.id: SlipLinkStatusResolver.productDisplayLabel(
+              name: p.name,
+              code: p.code,
+              number: p.number?.toString(),
+            ),
+        };
         showAppNotification(
           context,
-          '送信完了しました。',
+          SlipLinkStatusResolver.successMessage(
+            receptionNo: slip.receptionNo,
+            subject: slip.subject,
+            linkMode: linkMode,
+            linked: result.linked,
+            deliveryReturnUpdated: result.deliveryReturnUpdated,
+            warnings: result.warnings,
+            epcToLabel: epcToLabel,
+          ),
+          title: SlipLinkStatusResolver.successTitle(
+            subject: slip.subject,
+            deliveryReturnUpdated: result.deliveryReturnUpdated,
+            warnings: result.warnings,
+          ),
         );
       }
     }
@@ -1015,8 +1165,8 @@ class _SubjectBadge extends StatelessWidget {
 class _SlipRow extends StatelessWidget {
   const _SlipRow({
     required this.slip,
-    required this.handlerDisplay,
     this.getDetailDisplayName,
+    this.isVisitList = false,
     required this.isSelectedForSend,
     required this.isLinked,
     this.isSent = false,
@@ -1025,51 +1175,56 @@ class _SlipRow extends StatelessWidget {
   });
 
   final ReceptionSlip slip;
-  /// 担当者表示文字列（担当者名 or コード: X or --）
-  final String handlerDisplay;
   /// 明細の商品名表示（キャッシュ補完用）。null のときは d.productName を使用
   final String Function(ReceptionDetailItem)? getDetailDisplayName;
+  /// 来店伝票一覧: 左は現場名非表示・顧客名太字・商品3行。右は他一覧と同じ（用件→期日）
+  final bool isVisitList;
   final bool isSelectedForSend;
   final bool isLinked;
   final bool isSent;
   final VoidCallback onOpenDetail;
   final VoidCallback onToggleSend;
 
-  String _formatReceptionAt(DateTime? dt) {
-    if (dt == null) return '--';
-    final y = dt.year;
-    final m = dt.month;
-    final d = dt.day;
-    final hh = dt.hour.toString().padLeft(2, '0');
-    final mm = dt.minute.toString().padLeft(2, '0');
-    return '$y/$m/$d $hh:$mm';
-  }
-
   String _detailName(ReceptionDetailItem d) {
     if (getDetailDisplayName != null) return getDetailDisplayName!(d);
     return d.productName.trim().isEmpty ? '--' : d.productName;
   }
 
-  String _productSummary() {
-    if (slip.details.isEmpty) return '--';
-    final first = slip.details.first;
-    final qty = first.quantity != null ? first.quantity!.toInt().toString() : '--';
-    final firstLine = '${_detailName(first)}（$qty）';
-    if (slip.details.length == 1) return firstLine;
-    return '$firstLine  他${slip.details.length - 1}件';
+  String _productLine(ReceptionDetailItem d) {
+    final qty = d.quantity != null ? d.quantity!.toInt().toString() : '--';
+    return '${_detailName(d)}（$qty）';
   }
 
+  /// 商品名の複数行テキスト。来店は最大3行、それ以外は最大2行（超過は「他N件」）。
+  String _productSummary({required int maxLines}) {
+    if (slip.details.isEmpty) return '--';
+    if (slip.details.length <= maxLines) {
+      return slip.details.map(_productLine).join('\n');
+    }
+    final shown = slip.details.take(maxLines - 1).map(_productLine).toList();
+    shown.add('他${slip.details.length - (maxLines - 1)}件');
+    return shown.join('\n');
+  }
+
+  /// 右列2行目: 期日・期限（期日 / 期限 / 期限２）
   String _dueDateLabel() {
-    if (slip.dueDate == null) return '';
-    final d = slip.dueDate!;
-    return '期日 ${d.month}/${d.day}';
+    final parts = <String>[];
+    if (slip.dueDate != null) {
+      final d = slip.dueDate!;
+      parts.add('${d.month}/${d.day}');
+    }
+    final deadline = slip.deadlineName?.trim() ?? '';
+    if (deadline.isNotEmpty) parts.add(deadline);
+    final deadline2 = slip.deadline2?.trim() ?? '';
+    if (deadline2.isNotEmpty) parts.add(deadline2);
+    return parts.isEmpty ? '--' : parts.join(' ');
   }
 
   String _displayText(String value) => value.trim().isEmpty ? '--' : value.trim();
 
   @override
   Widget build(BuildContext context) {
-    final dueDateLabel = _dueDateLabel();
+    final productMaxLines = isVisitList ? 3 : 2;
     return Material(
       color: isSelectedForSend ? AppDesign.selectedBackground : null,
       child: InkWell(
@@ -1090,62 +1245,63 @@ class _SlipRow extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (slip.receptionAt != null)
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: Text(
-                    _formatReceptionAt(slip.receptionAt),
-                    style: const TextStyle(fontSize: 11, color: Color(0xFF888888)),
-                  ),
-                ),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(
-                    child: Text(
-                      _displayText(handlerDisplay),
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.black),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  _SubjectBadge(subject: slip.subject),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(
-                _displayText(slip.customerName),
-                style: const TextStyle(fontSize: 13, color: Colors.black),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 2),
-              Text(
-                _displayText(slip.siteName),
-                style: const TextStyle(fontSize: 12, color: Color(0xFF666666)),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 4),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // 左: 会社名 /（現場名）/ 商品名。担当者は一覧では出さない
                   Expanded(
-                    child: Text(
-                      _productSummary(),
-                      style: const TextStyle(fontSize: 12, color: Color(0xFF444444)),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _displayText(slip.listCustomerName),
+                          style: TextStyle(
+                            fontSize: isVisitList ? 14 : 13,
+                            fontWeight: isVisitList ? FontWeight.w700 : FontWeight.w400,
+                            color: Colors.black,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (!isVisitList) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            _displayText(slip.listSiteName),
+                            style: const TextStyle(fontSize: 12, color: Color(0xFF666666)),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                        const SizedBox(height: 4),
+                        Text(
+                          _productSummary(maxLines: productMaxLines),
+                          style: const TextStyle(fontSize: 12, color: Color(0xFF444444)),
+                          maxLines: productMaxLines,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
                     ),
                   ),
-                  if (dueDateLabel.isNotEmpty) ...[
-                    const SizedBox(width: 8),
-                    Text(
-                      dueDateLabel,
-                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF555555)),
-                    ),
-                  ],
+                  const SizedBox(width: 8),
+                  // 右: 1行目=用件、2行目=期日
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      _SubjectBadge(subject: slip.subject),
+                      const SizedBox(height: 4),
+                      Text(
+                        _dueDateLabel(),
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF555555),
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
                 ],
               ),
               if (isSent)

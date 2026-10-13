@@ -63,15 +63,16 @@ ICタグ（RFID）を読み取り、一覧表示したうえでステータス�
 
 ### 送信時（POST /api/product-updates）
 
-- **リクエスト:** `epc`, `read_at`, `changes.status`, `user_id`（担当者コード） など。
+- **リクエスト:** `epc`, `read_at`, `changes.status`, `user_id`（担当者コード）、任意で `storage_location`（保管場所コード 1〜4）など。
 - **処理内容:**
   1. **[ICタグ台帳]** を更新  
      - 条件: `LTRIM(RTRIM([tag_id2])) = epc`  
-     - 更新列: `[tag_mode2]` = 送信したステータス、`[updated]` = サーバー現在時刻（**秒単位**、コンマ秒なし）
+     - 更新列: `[tag_mode2]` = 送信したステータス、`[updated]` = サーバー現在時刻（**秒単位**、コンマ秒なし）  
+     - `storage_location` 指定時のみ `[保管場所コード]` も更新（保管場所に `tag_mode` は使わない）
   2. **[tag_table4]** にログ1件を INSERT  
      - `read_time`: サーバー現在時刻（秒単位）  
      - `tag_id2`: epc  
-     - `tag_mode`: 送信したステータス  
+     - `tag_mode`: 送信したステータス（ステータス履歴。保管場所ではない）  
      - `s_code`: user_id を整数にした値（従業員コード）。無効なら NULL  
      - `受付番号`: 0  
      - `mark`: 0  
@@ -87,8 +88,8 @@ ICタグ（RFID）を読み取り、一覧表示したうえでステータス�
 
 ## DB テーブル（参照）
 
-- **[ICタグ台帳]** … 更新対象。`tag_id2`, `tag_mode2`, `updated` 等。
-- **[tag_table4]** … タグモード更新ログ。`tag_id2` ごとの履歴として利用。
+- **[ICタグ台帳]** … 更新対象。`tag_id2`, `tag_mode2`（ステータス）, `保管場所コード`, `updated` 等。
+- **[tag_table4]** … タグモード更新ログ。`tag_id2` ごとの履歴として利用（`tag_mode` 列はステータス文字列）。
 - **[商品台帳]** … 商品名取得用（JOIN）。
 
 ---

@@ -5,11 +5,16 @@ import 'package:flutter/material.dart';
 import '../api/api_client.dart';
 import '../config/api_config.dart';
 import '../models/inventory_epc.dart';
+import '../models/operation_history.dart';
 import '../models/product_update_request.dart';
 import '../services/employee_storage.dart';
 import '../services/hardware_trigger_handler.dart';
 import '../services/hardware_trigger_mode_storage.dart';
+import '../services/operation_history_service.dart';
 import '../services/product_cache.dart';
+import '../models/storage_location_mode.dart';
+import '../services/storage_location_catalog.dart';
+import '../services/storage_location_gps_service.dart';
 import '../services/storage_location_storage.dart';
 import '../services/tag_ledger_cache.dart';
 import '../services/tag_reader_service.dart';
@@ -18,6 +23,7 @@ import '../utils/api_error_presenter.dart';
 import '../widgets/app_notification.dart';
 import '../widgets/main_flow_nav_bar.dart';
 import '../widgets/reader_not_connected_dialog.dart';
+import '../widgets/storage_location_change_dialog.dart';
 
 /// 画面 2: ICタグ読取・更新（design/screen2-tag-list-wireframe.html 準拠）
 /// 読取開始/停止、タグ一覧（EPC・商品名・ステータス）、送信待ち・送信ボタン
@@ -53,6 +59,7 @@ class _TagReadItem {
     required this.readAt,
     this.productCode,
     this.number,
+    this.storageLocationCode,
     this.fromCache = false,
     this.needsDbLookup = false,
     this.statusFromDb = false,
@@ -63,6 +70,9 @@ class _TagReadItem {
   final String readAt;
   final int? productCode;
   final int? number;
+
+  /// [ICタグ台帳].[保管場所コード]（未取得時は null）
+  final int? storageLocationCode;
 
   /// ローカル台帳キャッシュで照合できた
   final bool fromCache;
@@ -133,6 +143,7 @@ class _TagListScreenState extends State<TagListScreen> {
             readAt: cur.readAt,
             productCode: cur.productCode,
             number: cur.number,
+            storageLocationCode: null,
             fromCache: cur.fromCache,
             needsDbLookup: false,
             statusFromDb: true,
@@ -145,6 +156,9 @@ class _TagListScreenState extends State<TagListScreen> {
         productCode: p.productCode,
         number: p.number,
       );
+      await StorageLocationStorage.rememberDbStorageLocationCode(
+        p.storageLocationCode,
+      );
       if (!mounted) return;
       setState(() {
         _statusOverrides.remove(index);
@@ -156,6 +170,7 @@ class _TagListScreenState extends State<TagListScreen> {
           readAt: cur.readAt,
           productCode: p.productCode,
           number: p.number,
+          storageLocationCode: p.storageLocationCode,
           fromCache: cur.fromCache,
           needsDbLookup: false,
           statusFromDb: true,
@@ -194,6 +209,10 @@ class _TagListScreenState extends State<TagListScreen> {
       final readAt = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} '
           '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
       for (final p in list) {
+        await StorageLocationStorage.rememberDbStorageLocationCode(
+          p.storageLocationCode,
+        );
+        if (!mounted) return;
         setState(() {
           _reads.add(_TagReadItem(
             epc: p.tagId2,
@@ -202,6 +221,7 @@ class _TagListScreenState extends State<TagListScreen> {
             readAt: readAt,
             productCode: p.productCode,
             number: p.number,
+            storageLocationCode: p.storageLocationCode,
             statusFromDb: true,
           ));
         });
@@ -501,6 +521,117 @@ class _TagListScreenState extends State<TagListScreen> {
     );
   }
 
+  /// 送信対象タグの現在 [保管場所コード] を解決（未取得なら API で補完）。
+  Future<Map<int, int?>> _resolveCurrentStorageCodes(
+    ApiClient api,
+    List<int> orderedIndices,
+  ) async {
+    final result = <int, int?>{};
+    for (final index in orderedIndices) {
+      if (index >= _reads.length) continue;
+      final tag = _reads[index];
+      if (tag.statusFromDb) {
+        result[index] = tag.storageLocationCode;
+        continue;
+      }
+      try {
+        final p = await api.fetchProduct(tag.epc);
+        final code = p?.storageLocationCode;
+        result[index] = code;
+        await StorageLocationStorage.rememberDbStorageLocationCode(code);
+        if (mounted && p != null) {
+          setState(() {
+            final cur = _reads[index];
+            _reads[index] = _TagReadItem(
+              epc: cur.epc,
+              productName: cur.productName,
+              status: cur.status,
+              readAt: cur.readAt,
+              productCode: cur.productCode ?? p.productCode,
+              number: cur.number ?? p.number,
+              storageLocationCode: code,
+              fromCache: cur.fromCache,
+              needsDbLookup: cur.needsDbLookup,
+              statusFromDb: cur.statusFromDb,
+            );
+          });
+        }
+      } catch (_) {
+        // GPS 補助用の取得失敗はタグ更新を止めない
+        result[index] = tag.storageLocationCode;
+      }
+    }
+    return result;
+  }
+
+  /// GPS 自動判定モード用。確認ダイアログ後の適用コード、または null（保管場所は更新しない）。
+  Future<({int? codeToApply, Map<int, int?> currentByIndex})>
+      _resolveGpsStorageLocationForSend(
+    ApiClient api,
+    List<int> orderedIndices,
+  ) async {
+    const empty = (codeToApply: null, currentByIndex: <int, int?>{});
+    try {
+      final gps = await StorageLocationGpsService.instance.resolveForTagUpdate();
+      final detected = gps.detected;
+      if (detected == null) return empty;
+
+      final currentByIndex =
+          await _resolveCurrentStorageCodes(api, orderedIndices);
+      if (!mounted) {
+        return (codeToApply: null, currentByIndex: currentByIndex);
+      }
+
+      final differingCurrents = <int?>{};
+      for (final index in orderedIndices) {
+        final current = currentByIndex[index];
+        if (current != detected.code) {
+          differingCurrents.add(current);
+        }
+      }
+      if (differingCurrents.isEmpty) {
+        return (codeToApply: null, currentByIndex: currentByIndex);
+      }
+
+      final currentLabel = differingCurrents.length == 1
+          ? StorageLocationCatalog.displayName(differingCurrents.first)
+          : differingCurrents
+              .map(StorageLocationCatalog.displayName)
+              .join(' / ');
+
+      final confirmed = await showStorageLocationChangeDialog(
+        context,
+        currentName: currentLabel,
+        detectedName: detected.name,
+      );
+      if (!mounted || confirmed != true) {
+        return (codeToApply: null, currentByIndex: currentByIndex);
+      }
+      return (codeToApply: detected.code, currentByIndex: currentByIndex);
+    } catch (_) {
+      // GPS / 権限 / タイムアウト等でもタグ更新は続行（保管場所は触らない）
+      return empty;
+    }
+  }
+
+  /// 手動 / GPS に応じて、送信時の storage_location を決める。
+  /// 手動: 選択コードを常に送る（確認ダイアログなし・GPSなし）。
+  /// GPS: 既存の判定・確認フロー。
+  Future<({int? codeToApply, bool forceApply})> _resolveStorageForSend(
+    ApiClient api,
+    List<int> orderedIndices,
+  ) async {
+    final mode = await StorageLocationStorage.getMode();
+    if (mode == StorageLocationMode.manual) {
+      final code = await StorageLocationStorage.getStorageLocationCode();
+      return (codeToApply: code, forceApply: true);
+    }
+
+    final gpsResolve =
+        await _resolveGpsStorageLocationForSend(api, orderedIndices);
+    return (codeToApply: gpsResolve.codeToApply, forceApply: false);
+  }
+
   Future<void> _sendSelected() async {
     final toSend = Set<int>.from(_selectedForSend);
     if (toSend.isEmpty || _isSending) return;
@@ -517,25 +648,90 @@ class _TagListScreenState extends State<TagListScreen> {
 
     final api = ApiClient(baseUrl: kApiBaseUrl);
     final userId = await EmployeeStorage.getCode();
-    final storageLocationCode = await StorageLocationStorage.getStorageLocationCode();
+    final orderedIndices = toSend.toList()..sort();
+
+    final storageResolve = await _resolveStorageForSend(api, orderedIndices);
+    final storageLocationToApply = storageResolve.codeToApply;
+    final forceApplyStorage = storageResolve.forceApply;
+    if (!mounted) return;
+
+    if (forceApplyStorage && storageLocationToApply == null) {
+      setState(() {
+        _isSending = false;
+        _sendCompleted = 0;
+        _sendTotal = 0;
+      });
+      showAppNotification(
+        context,
+        '手動モードでは保管場所を選択してください。',
+        title: '保管場所未選択',
+      );
+      return;
+    }
+
+    final historyItems = <OperationHistoryItem>[];
+    for (final index in orderedIndices) {
+      if (index >= _reads.length) continue;
+      final tag = _reads[index];
+      final before = tag.status.isEmpty ? '不明' : tag.status;
+      historyItems.add(OperationHistoryItem(
+        epc: tag.epc,
+        productCode: tag.productCode?.toString(),
+        number: tag.number?.toString(),
+        productName: tag.productName,
+        statusBefore: before,
+        statusAfter: _effectiveStatus(index),
+        resultStatus: ItemResultStatus.notSent,
+      ));
+    }
 
     int successCount = 0;
     UserFacingApiError? sendError;
+    var failedAtHistoryIndex = -1;
 
     try {
-      for (final index in toSend) {
+      for (var hi = 0; hi < historyItems.length; hi++) {
+        final index = orderedIndices[hi];
         if (index >= _reads.length) continue;
         final tag = _reads[index];
         final status = _effectiveStatus(index);
+        final shouldUpdateStorage = storageLocationToApply != null &&
+            (forceApplyStorage ||
+                tag.storageLocationCode != storageLocationToApply);
         final request = ProductUpdateRequest(
           epc: tag.epc,
           readAt: tag.readAt,
           changes: {'status': status},
           userId: userId,
-          storageLocation: storageLocationCode,
+          storageLocation: shouldUpdateStorage ? storageLocationToApply : null,
         );
         try {
           await api.submitProductUpdate(request);
+          if (shouldUpdateStorage) {
+            await StorageLocationStorage.rememberDbStorageLocationCode(
+              storageLocationToApply,
+            );
+          }
+          if (shouldUpdateStorage && mounted) {
+            setState(() {
+              final cur = _reads[index];
+              _reads[index] = _TagReadItem(
+                epc: cur.epc,
+                productName: cur.productName,
+                status: cur.status,
+                readAt: cur.readAt,
+                productCode: cur.productCode,
+                number: cur.number,
+                storageLocationCode: storageLocationToApply,
+                fromCache: cur.fromCache,
+                needsDbLookup: cur.needsDbLookup,
+                statusFromDb: cur.statusFromDb,
+              );
+            });
+          }
+          historyItems[hi] = historyItems[hi].copyWith(
+            resultStatus: ItemResultStatus.success,
+          );
           successCount++;
           if (mounted) {
             setState(() => _sendCompleted = successCount);
@@ -543,9 +739,30 @@ class _TagListScreenState extends State<TagListScreen> {
         } catch (e, st) {
           logApiError(e, apiName: 'product-updates', stackTrace: st);
           sendError = toUserFacingApiError(e);
+          historyItems[hi] = historyItems[hi].copyWith(
+            resultStatus: ItemResultStatus.failed,
+            httpStatus: OperationHistoryService.httpStatusOf(e),
+            errorMessage: OperationHistoryService.errorMessageOf(e),
+          );
+          failedAtHistoryIndex = hi;
           break;
         }
       }
+
+      // fail-fast 以降は not_sent のまま
+      if (failedAtHistoryIndex >= 0) {
+        for (var hi = failedAtHistoryIndex + 1; hi < historyItems.length; hi++) {
+          historyItems[hi] = historyItems[hi].copyWith(
+            resultStatus: ItemResultStatus.notSent,
+          );
+        }
+      }
+
+      // 業務 API の結果表示とは独立して履歴を保存（失敗しても業務結果は変えない）
+      await OperationHistoryService.instance.recordStatusUpdate(
+        items: historyItems,
+        userId: userId,
+      );
 
       if (!mounted) return;
       if (sendError != null) {

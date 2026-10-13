@@ -6,8 +6,10 @@ import 'package:flutter/services.dart';
 import '../api/api_client.dart';
 import '../config/api_config.dart';
 import '../models/inventory_epc.dart';
+import '../models/operation_history.dart';
 import '../models/tag_ledger_register.dart';
 import '../services/employee_storage.dart';
+import '../services/operation_history_service.dart';
 import '../services/product_cache.dart';
 import '../services/radio_power_storage.dart';
 import '../services/tag_ledger_cache.dart';
@@ -293,6 +295,19 @@ class _TagIdProductLinkScreenState extends State<TagIdProductLinkScreen> {
         productCode: result.productCode,
         number: result.number,
       );
+      await OperationHistoryService.instance.recordTagRegistration(
+        resultStatus: HistoryResultStatus.success,
+        userId: staffCode,
+        userName: staffName,
+        item: OperationHistoryItem(
+          epc: result.tagId2,
+          productCode: result.productCode.toString(),
+          number: result.number.toString(),
+          productName: _productName,
+          statusAfter: result.tagMode2,
+          resultStatus: ItemResultStatus.success,
+        ),
+      );
       if (!mounted) return;
       setState(() {
         _ledgerHit = true;
@@ -305,6 +320,23 @@ class _TagIdProductLinkScreenState extends State<TagIdProductLinkScreen> {
       _snack('台帳に登録しました（個体番号: ${result.number}）');
     } catch (e, st) {
       logApiError(e, apiName: 'products/tag-ledger', stackTrace: st);
+      await OperationHistoryService.instance.recordTagRegistration(
+        resultStatus: HistoryResultStatus.failed,
+        httpStatus: OperationHistoryService.httpStatusOf(e),
+        errorMessage: OperationHistoryService.errorMessageOf(e),
+        userId: staffCode,
+        userName: staffName,
+        item: OperationHistoryItem(
+          epc: epc,
+          productCode: code.toString(),
+          number: (_autoNumber ? previewNumber : number)?.toString(),
+          productName: _productName,
+          statusAfter: '登録',
+          resultStatus: ItemResultStatus.failed,
+          httpStatus: OperationHistoryService.httpStatusOf(e),
+          errorMessage: OperationHistoryService.errorMessageOf(e),
+        ),
+      );
       await _restoreUserPower();
       if (mounted) setState(() => _isBusy = false);
       _snack(toUserFacingApiError(e).displayText);

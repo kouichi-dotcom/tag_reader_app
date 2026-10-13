@@ -2,69 +2,29 @@ import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
 import '../config/api_config.dart';
+import '../models/output_mode.dart';
 import '../services/connected_device_storage.dart';
 import '../services/employee_cache.dart';
 import '../services/tag_reader_service.dart';
 import '../services/employee_storage.dart';
+import '../services/operation_history_service.dart';
 import '../services/product_cache.dart';
 import '../services/radio_power_storage.dart';
 import '../services/storage_location_storage.dart';
 import '../services/tag_ledger_cache.dart';
 import '../theme/app_design.dart';
 import 'device_connection_screen.dart';
+import 'operation_history_screen.dart';
+import 'radio_power_screen.dart';
 import 'zaicon_main_shell.dart';
 import 'settings_screen.dart';
 import 'slip_load_screen.dart';
 import 'tag_list_screen.dart';
-
-enum _OutputMode { hand, near, mid, far }
-
-extension on _OutputMode {
-  String get mainLabel {
-    switch (this) {
-      case _OutputMode.hand:
-        return '手元';
-      case _OutputMode.near:
-        return '近距離';
-      case _OutputMode.mid:
-        return '中距離';
-      case _OutputMode.far:
-        return '遠距離';
-    }
-  }
-
-  String get subLabel {
-    switch (this) {
-      case _OutputMode.hand:
-        return '（3-5）';
-      case _OutputMode.near:
-        return '（15-30）';
-      case _OutputMode.mid:
-        return '（30-50）';
-      case _OutputMode.far:
-        return '（最大1m20）';
-    }
-  }
-
-  String get displayLabel => '$mainLabel$subLabel';
-
-  /// ターゲットdBm目安（内部変換用）
-  int get targetDbm {
-    switch (this) {
-      case _OutputMode.hand:
-        return 4; // 3-5 の中間
-      case _OutputMode.near:
-        return 15;
-      case _OutputMode.mid:
-        return 20;
-      case _OutputMode.far:
-        return 30;
-    }
-  }
-}
+import '../services/urgent_store_delivery_session.dart';
+import 'urgent_store_delivery_screen.dart';
 
 /// メイン画面
-/// 接続状態・作業メニュー・出力モード・設定への入口
+/// 接続状態・作業メニュー・出力現状表示・設定への入口
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -78,15 +38,11 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _storageLocationName;
 
   static const Color _outputTeal = Color(0xFF00897B);
-  static const Color _outputTealBg = Color(0xFFE0F2F1);
 
   final _reader = TagReaderService.instance;
 
-  /// UI上で選択中（未適用の可能性あり）
-  _OutputMode _selectedOutputMode = _OutputMode.hand;
-
-  /// 実際に適用済みの値
-  _OutputMode _appliedOutputMode = _OutputMode.hand;
+  /// 現在適用済みの出力モード（表示用）
+  OutputMode _appliedOutputMode = OutputMode.hand;
 
   bool get _isReaderConnected =>
       _connectedDeviceName != null && _connectedDeviceName!.isNotEmpty;
@@ -115,24 +71,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadStorageLocation() async {
-    final name = await StorageLocationStorage.getName();
+    // ホーム表示は DB 上の保管場所（直近観測）。手動ドロップダウン値ではない。
+    final name = await StorageLocationStorage.getLastDbStorageLocationName();
     if (mounted) setState(() => _storageLocationName = name);
-  }
-
-  static const int _maxDecreaseDecibel = 30;
-
-  _OutputMode _dbmToMode(int dbm) {
-    final v = dbm.clamp(0, _maxDecreaseDecibel);
-    if (v <= 5) return _OutputMode.hand;
-    if (v <= 15) return _OutputMode.near;
-    if (v <= 20) return _OutputMode.mid;
-    return _OutputMode.far;
   }
 
   Future<void> _loadOutputMode() async {
     final storedDecrease = await RadioPowerStorage.getDecreaseDecibel();
     final storedDbm = (30 - storedDecrease).clamp(0, 30);
-    var mode = _dbmToMode(storedDbm);
+    var mode = OutputModeX.fromDbm(storedDbm);
 
     if (_reader.supportsNativeRfid) {
       try {
@@ -140,7 +87,7 @@ class _HomeScreenState extends State<HomeScreen> {
         if (connected) {
           final currentDbm = await _reader.getRadioPower();
           if (currentDbm != null && currentDbm > 0) {
-            mode = _dbmToMode(currentDbm);
+            mode = OutputModeX.fromDbm(currentDbm);
           }
         }
       } catch (_) {
@@ -149,92 +96,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     if (!mounted) return;
-    setState(() {
-      _selectedOutputMode = mode;
-      _appliedOutputMode = mode;
-    });
-  }
-
-  int _modeToTargetDbm(_OutputMode mode) => mode.targetDbm;
-
-  Future<void> _onApplyPressed() async {
-    final mode = _selectedOutputMode;
-    if (mode == _OutputMode.far && mode != _appliedOutputMode) {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('遠距離に変更しますか？'),
-          content: const Text(
-            '出力を「遠距離」に変更します。\n周辺のタグも読み取る可能性があります。',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('キャンセル'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('変更する'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true || !mounted) return;
-    }
-    await _applyOutputMode(mode);
-  }
-
-  Future<void> _applyOutputMode(_OutputMode mode) async {
-    final targetDbm = _modeToTargetDbm(mode);
-
-    int maxDbm = 30;
-    bool connected = false;
-    if (_reader.supportsNativeRfid) {
-      try {
-        connected = await _reader.isConnected();
-        if (connected) {
-          final deviceMaxDbm = await _reader.getMaxRadioPower();
-          if (deviceMaxDbm != null && deviceMaxDbm > 0) {
-            maxDbm = deviceMaxDbm;
-          }
-        }
-      } catch (_) {
-        // 読めなかった場合は既定（30）のまま
-      }
-    }
-
-    final decreaseDecibel = (maxDbm - targetDbm).clamp(0, _maxDecreaseDecibel);
-    await RadioPowerStorage.saveDecreaseDecibel(decreaseDecibel);
-
-    String message;
-    var appliedOk = true;
-    if (_reader.supportsNativeRfid) {
-      try {
-        if (connected) {
-          final ok = await _reader.setRadioPower(decreaseDecibel);
-          appliedOk = ok;
-          message = ok
-              ? '出力を「${mode.displayLabel}」に変更しました。'
-              : '出力モードの反映に失敗しました（接続状態を確認してください）。';
-        } else {
-          message = '出力モードを保存しました。接続後に反映されます。';
-        }
-      } catch (e) {
-        appliedOk = false;
-        message = '出力モードの反映に失敗しました: $e';
-      }
-    } else {
-      message = '出力モードを保存しました（モバイル実機以外ではリーダーへ反映されません）。';
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _selectedOutputMode = mode;
-      if (appliedOk) {
-        _appliedOutputMode = mode;
-      }
-    });
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    setState(() => _appliedOutputMode = mode);
   }
 
   Future<void> _openConnectionScreen() async {
@@ -244,6 +106,16 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
     await _loadConnectedDevice();
+    await _loadOutputMode();
+  }
+
+  Future<void> _openOutputSettings() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => const RadioPowerScreen(showBackButton: true),
+      ),
+    );
+    if (!mounted) return;
     await _loadOutputMode();
   }
 
@@ -373,6 +245,77 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// 通常の作業メニューと区別する「急ぎ来店納品」入口（薄い琥珀系・警告色は使わない）
+  Widget _buildUrgentDeliveryAction({required VoidCallback onTap}) {
+    // 件数はアプリ内メモリの当日未処理（仮）。本実装時は API／永続化に差し替え。
+    final pendingCount = UrgentStoreDeliverySession.instance.pendingCount;
+
+    return Material(
+      color: const Color(0xFFFFF8E1),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFD4A017), width: 1.5),
+          ),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.flash_on_outlined,
+                size: 28,
+                color: Color(0xFF8D6E63),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Text(
+                          '急ぎ来店納品',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.black,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          '未処理 $pendingCount点',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF8D6E63),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    const Text(
+                      '伝票を選ばず先にタグを読み取る',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF666666),
+                        height: 1.3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: Color(0xFF8D6E63)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildWorkAction({
     required IconData icon,
     required String title,
@@ -471,6 +414,13 @@ class _HomeScreenState extends State<HomeScreen> {
           },
         ),
         const SizedBox(height: 8),
+        _buildUrgentDeliveryAction(
+          onTap: () async {
+            await Navigator.of(context).push(buildUrgentStoreDeliveryRoute());
+            if (mounted) setState(() {});
+          },
+        ),
+        const SizedBox(height: 8),
         _buildWorkAction(
           icon: Icons.inventory_2_outlined,
           title: '在庫を見る',
@@ -483,98 +433,25 @@ class _HomeScreenState extends State<HomeScreen> {
             );
           },
         ),
+        const SizedBox(height: 8),
+        _buildWorkAction(
+          icon: Icons.history,
+          title: '更新履歴',
+          subtitle: 'この端末の更新操作を確認',
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (context) =>
+                    const OperationHistoryScreen(showBackButton: true),
+              ),
+            );
+          },
+        ),
       ],
     );
   }
 
   Widget _buildOutputModePicker() {
-    const tileRadius = 10.0;
-    const tilePadding = EdgeInsets.symmetric(horizontal: 10, vertical: 7);
-    const tileBorderWidth = 1.0;
-    final hasPending = _selectedOutputMode != _appliedOutputMode;
-
-    Color tileBorderColor(_OutputMode m) {
-      if (m == _selectedOutputMode) return _outputTeal;
-      return Colors.grey.shade300;
-    }
-
-    Color tileBg(_OutputMode m) =>
-        m == _selectedOutputMode ? _outputTealBg : Colors.white;
-
-    Widget tile(_OutputMode m) {
-      final selected = m == _selectedOutputMode;
-      return InkWell(
-        borderRadius: BorderRadius.circular(tileRadius),
-        onTap: () => setState(() => _selectedOutputMode = m),
-        child: Container(
-          padding: tilePadding,
-          decoration: BoxDecoration(
-            color: tileBg(m),
-            borderRadius: BorderRadius.circular(tileRadius),
-            border: Border.all(color: tileBorderColor(m), width: tileBorderWidth),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      m.mainLabel,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w900,
-                        color: Colors.black,
-                        height: 1.1,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Text(
-                      m.subLabel,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                        color: Colors.black,
-                        height: 1.1,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 6),
-              Container(
-                width: 18,
-                height: 18,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: selected ? _outputTeal : Colors.grey.shade400,
-                    width: 1.5,
-                  ),
-                  color: selected ? _outputTeal : Colors.transparent,
-                ),
-                child: Center(
-                  child: Opacity(
-                    opacity: selected ? 1 : 0,
-                    child: const Icon(
-                      Icons.check,
-                      size: 12,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
@@ -583,14 +460,13 @@ class _HomeScreenState extends State<HomeScreen> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.black, width: 1),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Row(
         children: [
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
                   'リーダー出力',
                   style: TextStyle(
                     fontSize: 14,
@@ -598,53 +474,36 @@ class _HomeScreenState extends State<HomeScreen> {
                     color: Colors.black,
                   ),
                 ),
-              ),
-              ElevatedButton(
-                onPressed: _onApplyPressed,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: hasPending ? _outputTeal : Colors.grey.shade400,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+                const SizedBox(height: 4),
+                Text(
+                  '現在：${_appliedOutputMode.displayLabel}',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black87,
                   ),
                 ),
-                child: const Text(
-                  '適用',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            hasPending
-                ? '現在：${_appliedOutputMode.displayLabel}　→　変更予定：${_selectedOutputMode.displayLabel}'
-                : '現在：${_appliedOutputMode.displayLabel}',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              color: hasPending ? _outputTeal : Colors.black87,
+              ],
             ),
           ),
-          const SizedBox(height: 8),
-          GridView.count(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisCount: 2,
-            mainAxisSpacing: 6,
-            crossAxisSpacing: 6,
-            childAspectRatio: 2.8,
-            children: [
-              tile(_OutputMode.hand),
-              tile(_OutputMode.near),
-              tile(_OutputMode.mid),
-              tile(_OutputMode.far),
-            ],
+          ElevatedButton(
+            onPressed: _openOutputSettings,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _outputTeal,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text(
+              '出力設定',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
           ),
         ],
       ),
@@ -661,6 +520,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _loadStorageLocation(),
       _loadOutputMode(),
     ]);
+    // 更新履歴の古いデータを削除（失敗しても業務に影響しない）
+    OperationHistoryService.instance.purgeOlderThanRetention();
     // 担当者キャッシュを初回一括取得で準備（バックグラウンド）
     final cache = EmployeeCache.instance;
     cache.init().then((_) {
