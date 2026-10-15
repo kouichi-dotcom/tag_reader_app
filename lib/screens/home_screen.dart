@@ -4,6 +4,7 @@ import '../api/api_client.dart';
 import '../config/api_config.dart';
 import '../models/output_mode.dart';
 import '../services/connected_device_storage.dart';
+import '../services/reader_connection_session.dart';
 import '../services/employee_cache.dart';
 import '../services/tag_reader_service.dart';
 import '../services/employee_storage.dart';
@@ -57,16 +58,23 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadConnectedDevice() async {
-    final name = await ConnectedDeviceStorage.getName();
-    // Android: 実態が未接続なら表示を合わせる（アプリ再起動後など）
-    if (name != null &&
-        name.isNotEmpty &&
-        TagReaderService.instance.supportsNativeRfid &&
-        !(await TagReaderService.instance.isConnected())) {
-      await ConnectedDeviceStorage.clear();
-      if (mounted) setState(() => _connectedDeviceName = null);
+    final session = ReaderConnectionSession.instance;
+    session.ensureStarted();
+    // Storage は表示補助。実接続は SDK / セッションを優先する。
+    if (TagReaderService.instance.supportsNativeRfid) {
+      await session.refreshFromNative();
+      final connected = session.isConnected ||
+          await TagReaderService.instance.isConnected();
+      if (!connected) {
+        await ConnectedDeviceStorage.clear();
+        if (mounted) setState(() => _connectedDeviceName = null);
+        return;
+      }
+      final name = session.deviceName ?? await ConnectedDeviceStorage.getName();
+      if (mounted) setState(() => _connectedDeviceName = name);
       return;
     }
+    final name = await ConnectedDeviceStorage.getName();
     if (mounted) setState(() => _connectedDeviceName = name);
   }
 
@@ -568,7 +576,28 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    ReaderConnectionSession.instance.ensureStarted();
+    ReaderConnectionSession.instance.addListener(_onReaderSessionChanged);
     _loadAll();
+  }
+
+  void _onReaderSessionChanged() {
+    if (!mounted) return;
+    final session = ReaderConnectionSession.instance;
+    if (!session.isConnected) {
+      if (_connectedDeviceName != null) {
+        setState(() => _connectedDeviceName = null);
+      }
+    } else if (session.deviceName != null &&
+        session.deviceName != _connectedDeviceName) {
+      setState(() => _connectedDeviceName = session.deviceName);
+    }
+  }
+
+  @override
+  void dispose() {
+    ReaderConnectionSession.instance.removeListener(_onReaderSessionChanged);
+    super.dispose();
   }
 
   @override

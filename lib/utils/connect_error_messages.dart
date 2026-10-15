@@ -1,49 +1,58 @@
 import 'package:flutter/services.dart';
 
-/// タグリーダー接続失敗時にユーザーへ表示する文言（現場で試せる手順を含む）
+/// タグリーダー接続失敗時にユーザーへ表示する文言
 String connectFailureMessageForUser(Object? error) {
   if (error is PlatformException) {
-    if (error.code == 'permission_required') {
-      return 'Bluetoothの使用が許可されていません。\n'
-          '設定アプリで Bluetooth をオンにし、このアプリの Bluetooth 権限を許可してください。';
-    }
-    if (error.code == 'connect_failed') {
-      final detail = (error.message ?? '').trim();
-      if (detail.isNotEmpty) {
-        // Android 等で SDK の英語メッセージのみのときは、対処の目安を先に出す
-        if (!_containsJapanese(detail)) {
-          return '$_defaultMessage\n\n（詳細: $detail）';
+    final code = error.code;
+    switch (code) {
+      case 'bluetooth_off':
+        return 'BluetoothがOFFです。スマホのBluetoothをONにしてください。';
+      case 'permission_required':
+      case 'permission_request_in_progress':
+        return 'Bluetoothの使用が許可されていません。スマホの設定を確認してください。';
+      case 'connect_timeout':
+        return '接続が完了しませんでした。タグリーダーの電源と他の端末の接続状況を確認してください。\n'
+            '$_otherDeviceHint';
+      case 'not_found':
+      case 'device_not_found':
+        return 'タグリーダーが見つかりません。電源と通信範囲を確認してください。';
+      case 'connect_in_progress':
+        return '現在、接続処理中です。処理が完了してから操作してください。';
+      case 'disconnect_in_progress':
+        return '現在、切断処理中です。';
+      case 'disconnect_incomplete':
+        return '切断の完了を確認できませんでした。数秒待ってから、もう一度切断するか、リーダーの電源を確認してください。';
+      case 'connect_failed':
+        final detail = (error.message ?? '').trim();
+        if (_isKnownUserMessage(detail)) {
+          return detail;
         }
-        // ネイティブが日本語で具体的な場合はそのまま（補足が薄いときだけ追加）
-        if (_needsExtraTip(detail)) {
-          return '$detail\n\n$_extraTipOneLine';
-        }
-        return detail;
-      }
+        return '$_unknownConnect\n\n$_otherDeviceHint';
+      default:
+        break;
     }
   }
-  return _defaultMessage;
+  return '$_unknownConnect\n\n$_otherDeviceHint';
+}
+
+String linkLostMessageForUser() => 'タグリーダーとの接続が切れました。';
+
+bool _isKnownUserMessage(String detail) {
+  if (!_containsJapanese(detail)) return false;
+  // ネイティブが既にユーザー向け日本語を返している場合
+  if (detail.contains('見つかりません')) return true;
+  if (detail.contains('タイムアウト')) return true;
+  if (detail.contains('Bluetooth')) return true;
+  if (detail.contains('電源')) return true;
+  if (detail.contains('接続')) return true;
+  return detail.length >= 8;
 }
 
 bool _containsJapanese(String s) {
   return RegExp(r'[\u3040-\u30ff\u4e00-\u9fff]').hasMatch(s);
 }
 
-bool _needsExtraTip(String detail) {
-  // すでに「試す」「スキャン」等まで書いてある場合は重複させない
-  if (detail.contains('スキャン')) return false;
-  if (detail.contains('お試し')) return false;
-  if (detail.length > 120) return false;
-  return true;
-}
+const String _otherDeviceHint =
+    '他のスマホが接続中の可能性があります。使用中の端末から切断してください。';
 
-const String _extraTipOneLine =
-    'スマホとタグリーダーを10cm以内に近づけてから、もう一度「接続」してください。'
-    'それでも接続できない場合は、リーダーの電源を入れ直し、「新しいタグリーダーとペアリング設定」で周辺をスキャンしてください。';
-
-const String _defaultMessage =
-    '接続できませんでした。スマホとタグリーダーを10cm以内に近づけてから、もう一度「接続」してください。\n'
-    'それでも接続できない場合は、次を確認してください。\n'
-    '・リーダーの電源が入っているか\n'
-    '・他のスマホやPCが同じリーダーに接続していないか\n'
-    '・「新しいタグリーダーとペアリング設定」で周辺をスキャンしてから、もう一度「接続」する';
+const String _unknownConnect = 'タグリーダーに接続できませんでした。もう一度お試しください。';

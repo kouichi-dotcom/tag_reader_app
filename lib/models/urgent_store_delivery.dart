@@ -21,25 +21,13 @@ class UrgentReadItem {
   final String tagId;
   final DateTime readAt;
 
-  /// 表示用「08:15」
+  /// 表示用「2026/10/15 08:15」
   String get readTimeLabel {
+    final y = readAt.year.toString();
+    final mo = readAt.month.toString().padLeft(2, '0');
+    final d = readAt.day.toString().padLeft(2, '0');
     final hh = readAt.hour.toString().padLeft(2, '0');
     final mm = readAt.minute.toString().padLeft(2, '0');
-    return '$hh:$mm';
+    return '$y/$mo/$d $hh:$mm';
   }
-}
-
-/// 伝票選択画面用の仮伝票（本実装時は ReceptionSlip 等に差し替え）
-class UrgentSlipCandidate {
-  const UrgentSlipCandidate({
-    required this.id,
-    required this.deliveryNo,
-    required this.companyName,
-    required this.siteName,
-  });
-
-  final String id;
-  final String deliveryNo;
-  final String companyName;
-  final String siteName;
 }

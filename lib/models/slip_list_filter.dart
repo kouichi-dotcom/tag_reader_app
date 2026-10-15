@@ -44,6 +44,12 @@ class SlipListFilter {
     subjectFilter: ['来店(納品)', '来店(返品)'],
   );
 
+  /// 急ぎ来店納品用：来店(納品)のみ・期日は呼び出し側で date を今日に設定
+  static const SlipListFilter urgentVisitDelivery = SlipListFilter(
+    subjectFilter: ['来店(納品)'],
+    limit: 50,
+  );
+
   SlipListFilter copyWith({
     DateTime? date,
     String? assigneeCode,

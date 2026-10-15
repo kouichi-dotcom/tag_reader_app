@@ -93,6 +93,7 @@ class TagReaderService {
     await _method.invokeMethod<void>('stopBleScan');
   }
 
+  /// 成功時 true。失敗時は [PlatformException]（code で原因分類）または false。
   Future<bool> connect({required String name, required String address}) async {
     if (!supportsNativeRfid) return false;
     final ok = await _method.invokeMethod<bool>('connect', {
@@ -102,6 +103,9 @@ class TagReaderService {
     return ok ?? false;
   }
 
+  /// 切断完了を確認できたとき true。
+  /// 完了未確認は [PlatformException] `disconnect_incomplete`。
+  /// 切断中の再要求は `disconnect_in_progress` / 接続中は `connect_in_progress`。
   Future<bool> disconnect() async {
     if (!supportsNativeRfid) return false;
     final ok = await _method.invokeMethod<bool>('disconnect');

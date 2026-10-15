@@ -29,8 +29,16 @@ static void (^sEventCallback)(NSDictionary *event);
   return [[TssRfidSdkSession shared] disconnect];
 }
 
++ (BOOL)disconnectAndConfirmWithError:(NSError *__autoreleasing *)outError {
+  return [[TssRfidSdkSession shared] disconnectWithError:outError];
+}
+
 + (BOOL)isConnected {
   return [[TssRfidSdkSession shared] isConnected];
+}
+
++ (BOOL)isBluetoothPoweredOn {
+  return [[TssRfidSdkSession shared] isBluetoothPoweredOn];
 }
 
 + (nullable NSString *)firmwareVersion {

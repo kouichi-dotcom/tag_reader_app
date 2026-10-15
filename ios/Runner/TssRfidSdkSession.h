@@ -17,8 +17,13 @@ NS_ASSUME_NONNULL_BEGIN
                 address:(NSString *)address
                outError:(NSError *_Nullable *_Nullable)outError;
 
+/// disconnect 要求後、未接続確認まで待つ。完了未確認時は *outError に disconnect_incomplete。
+- (BOOL)disconnectWithError:(NSError *_Nullable *_Nullable)outError;
 - (BOOL)disconnect;
 - (BOOL)isConnected;
+
+/// CBCentralManager 相当の電源状態。OFF のとき NO。
+- (BOOL)isBluetoothPoweredOn;
 - (nullable NSString *)firmwareVersion;
 
 - (BOOL)startInventoryDateTime:(BOOL)dateTime

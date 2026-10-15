@@ -58,7 +58,7 @@ final class TssRfidPlugin: NSObject, FlutterStreamHandler {
     case "connect":
       handleConnect(call: call, result: result)
     case "disconnect":
-      result(TssRfidNativeBridge.disconnect())
+      handleDisconnect(result: result)
     case "startInventory":
       handleStartInventory(call: call, result: result)
     case "stopInventory":
@@ -85,10 +85,15 @@ final class TssRfidPlugin: NSObject, FlutterStreamHandler {
 
   private func handleRequestBluetoothPermissions(result: @escaping FlutterResult) {
     // TSS_SDK が内部で CoreBluetooth を管理。Info.plist の利用目的文言を参照。
+    // 電源 OFF は権限とは別に connect / getBonded で検出する。
     result(true)
   }
 
   private func handleGetBondedDevices(result: @escaping FlutterResult) {
+    if !TssRfidNativeBridge.isBluetoothPoweredOn() {
+      result(FlutterError(code: "bluetooth_off", message: "Bluetooth is off.", details: nil))
+      return
+    }
     let list = TssRfidNativeBridge.knownBondedStyleDevices() as? [[String: Any]] ?? []
     result(list)
   }
@@ -104,6 +109,10 @@ final class TssRfidPlugin: NSObject, FlutterStreamHandler {
   }
 
   private func handleStartBleScan(result: @escaping FlutterResult) {
+    if !TssRfidNativeBridge.isBluetoothPoweredOn() {
+      result(FlutterError(code: "bluetooth_off", message: "Bluetooth is off.", details: nil))
+      return
+    }
     TssRfidNativeBridge.startBleScan()
     result(true)
   }
@@ -111,6 +120,26 @@ final class TssRfidPlugin: NSObject, FlutterStreamHandler {
   private func handleStopBleScan(result: @escaping FlutterResult) {
     TssRfidNativeBridge.stopBleScan()
     result(true)
+  }
+
+  private func handleDisconnect(result: @escaping FlutterResult) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      do {
+        try TssRfidNativeBridge.disconnectAndConfirm()
+        DispatchQueue.main.async {
+          result(true)
+        }
+      } catch let e as NSError {
+        DispatchQueue.main.async {
+          let code = Self.flutterErrorCode(for: e)
+          result(FlutterError(code: code, message: e.localizedDescription, details: nil))
+        }
+      } catch {
+        DispatchQueue.main.async {
+          result(FlutterError(code: "disconnect_incomplete", message: "\(error)", details: nil))
+        }
+      }
+    }
   }
 
   private func handleConnect(call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -121,22 +150,48 @@ final class TssRfidPlugin: NSObject, FlutterStreamHandler {
       result(false)
       return
     }
-    TssRfidNativeBridge.rememberDeviceName(name, address: address)
+    if !TssRfidNativeBridge.isBluetoothPoweredOn() {
+      result(FlutterError(code: "bluetooth_off", message: "Bluetooth is off.", details: nil))
+      return
+    }
+    // Known 保存は接続成功後のみ（失敗端末を一覧に残さない）
     DispatchQueue.global(qos: .userInitiated).async {
       do {
         try TssRfidNativeBridge.connect(withName: name, address: address)
+        TssRfidNativeBridge.rememberDeviceName(name, address: address)
         DispatchQueue.main.async {
           result(true)
         }
       } catch let e as NSError {
         DispatchQueue.main.async {
-          result(FlutterError(code: "connect_failed", message: e.localizedDescription, details: nil))
+          let code = Self.flutterErrorCode(for: e)
+          result(FlutterError(code: code, message: e.localizedDescription, details: nil))
         }
       } catch {
         DispatchQueue.main.async {
           result(FlutterError(code: "connect_failed", message: "\(error)", details: nil))
         }
       }
+    }
+  }
+
+  /// NSError.code（TssRfidSdkSession）を Flutter のエラーコードへマッピング
+  private static func flutterErrorCode(for error: NSError) -> String {
+    switch error.code {
+    case 12:
+      return "not_found"
+    case 14:
+      return "connect_timeout"
+    case 17:
+      return "bluetooth_off"
+    case 40:
+      return "disconnect_in_progress"
+    case 41:
+      return "connect_in_progress"
+    case 42:
+      return "disconnect_incomplete"
+    default:
+      return "connect_failed"
     }
   }
 

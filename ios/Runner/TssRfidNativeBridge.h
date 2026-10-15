@@ -19,7 +19,12 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (BOOL)disconnect;
 
+/// 切断完了待ち付き。Swift から呼び分けやすいよう別名にする。
++ (BOOL)disconnectAndConfirmWithError:(NSError *_Nullable *_Nullable)outError;
+
 + (BOOL)isConnected;
+
++ (BOOL)isBluetoothPoweredOn;
 
 + (nullable NSString *)firmwareVersion;
 

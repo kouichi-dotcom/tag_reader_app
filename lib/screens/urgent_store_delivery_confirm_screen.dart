@@ -1,75 +1,38 @@
 import 'package:flutter/material.dart';
 
+import '../models/reception_detail_item.dart';
+import '../models/reception_slip.dart';
 import '../models/urgent_store_delivery.dart';
-import '../services/urgent_store_delivery_session.dart';
 import '../theme/app_design.dart';
 import '../widgets/main_flow_nav_bar.dart';
 import '../widgets/urgent_read_item_tile.dart';
 
-/// 急ぎ来店納品 最終確認（商品＋伝票）。送信は UI 仮実装のみ。
-class UrgentStoreDeliveryConfirmScreen extends StatefulWidget {
+/// 急ぎ来店納品 過不足確認（伝票明細 × 読取商品）。
+/// 突き合わせロジック・送信は今後実装。現状は双方の一覧表示のみ。
+class UrgentStoreDeliveryConfirmScreen extends StatelessWidget {
   const UrgentStoreDeliveryConfirmScreen({
     super.key,
     required this.slip,
     required this.items,
   });
 
-  final UrgentSlipCandidate slip;
+  final ReceptionSlip slip;
   final List<UrgentReadItem> items;
 
-  @override
-  State<UrgentStoreDeliveryConfirmScreen> createState() =>
-      _UrgentStoreDeliveryConfirmScreenState();
-}
-
-class _UrgentStoreDeliveryConfirmScreenState
-    extends State<UrgentStoreDeliveryConfirmScreen> {
-  bool _sending = false;
-
-  Future<void> _onSend() async {
-    if (_sending) return;
-    setState(() => _sending = true);
-
-    // 本実装時はここで API 送信。現状は UI 確認のみ。
-    await Future<void>.delayed(const Duration(milliseconds: 200));
-
-    UrgentStoreDeliverySession.instance
-        .removeByIds(widget.items.map((e) => e.id));
-
-    if (!mounted) return;
-
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Text('送信しました'),
-        content: Text(
-          '選択した${widget.items.length}点を伝票（納品No. ${widget.slip.deliveryNo}）へ送信しました。\n'
-          '（仮実装：実際の登録はまだ行いません）',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text(
-              'OK',
-              style: TextStyle(fontWeight: FontWeight.w700),
-            ),
-          ),
-        ],
-      ),
-    );
-
-    if (!mounted) return;
-
-    // 急ぎ来店納品の統合画面まで戻す
-    Navigator.of(context).popUntil((route) {
-      return route.isFirst ||
-          (route.settings.name == UrgentStoreDeliveryRoutes.main);
-    });
+  String _productLine(ReceptionDetailItem d) {
+    final name = d.productName.trim().isEmpty ? '--' : d.productName.trim();
+    final qty = d.quantity != null ? d.quantity!.toInt().toString() : '--';
+    return '$name　$qty';
   }
 
   @override
   Widget build(BuildContext context) {
+    final company = slip.listCustomerName.trim().isEmpty
+        ? '--'
+        : slip.listCustomerName;
+    final site =
+        slip.listSiteName.trim().isEmpty ? '--' : slip.listSiteName;
+
     return Scaffold(
       backgroundColor: AppDesign.scaffoldBackground,
       body: Center(
@@ -81,7 +44,7 @@ class _UrgentStoreDeliveryConfirmScreenState
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 MainFlowNavBar(
-                  title: '急ぎ来店納品 確認',
+                  title: '過不足確認',
                   showBackButton: true,
                   onBack: () => Navigator.of(context).pop(),
                 ),
@@ -89,70 +52,78 @@ class _UrgentStoreDeliveryConfirmScreenState
                   child: ListView(
                     children: [
                       Container(
-                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                        width: double.infinity,
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                        color: const Color(0xFFFFF8E1),
                         child: const Text(
-                          '選択した伝票',
+                          '伝票の商品と読み取った商品の突き合わせは今後実装します。',
                           style: TextStyle(
                             fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF666666),
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF5D4037),
+                            height: 1.4,
                           ),
                         ),
                       ),
-                      Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 16),
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: AppDesign.navBarBackground,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: AppDesign.navBarBorder),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '納品No. ${widget.slip.deliveryNo}',
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.black,
+                      _sectionTitle('伝票'),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: AppDesign.navBarBackground,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: AppDesign.navBarBorder),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                company,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              widget.slip.companyName,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                color: Color(0xFF333333),
+                              const SizedBox(height: 4),
+                              Text(
+                                site,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: Color(0xFF555555),
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              widget.slip.siteName,
-                              style: const TextStyle(
-                                fontSize: 14,
-                                color: Color(0xFF555555),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
-                        child: Text(
-                          '選択した商品　${widget.items.length}点',
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF666666),
+                              const SizedBox(height: 10),
+                              if (slip.details.isEmpty)
+                                const Text(
+                                  '商品なし',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: Color(0xFF888888),
+                                  ),
+                                )
+                              else
+                                ...slip.details.map(
+                                  (d) => Padding(
+                                    padding: const EdgeInsets.only(bottom: 4),
+                                    child: Text(
+                                      _productLine(d),
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
                       ),
-                      ...widget.items.map(
+                      _sectionTitle('読み取った商品　${items.length}点'),
+                      ...items.map(
                         (item) => UrgentReadItemTile(
                           item: item,
                           showCheckbox: false,
-                          showReadTime: false,
+                          showTagId: false,
+                          showReadTime: true,
                         ),
                       ),
                       const SizedBox(height: 16),
@@ -169,60 +140,46 @@ class _UrgentStoreDeliveryConfirmScreenState
                   ),
                   child: SafeArea(
                     top: false,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed:
-                                _sending ? null : () => Navigator.of(context).pop(),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.black87,
-                              side: const BorderSide(color: Color(0xFFCCCCCC)),
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                            ),
-                            child: const Text(
-                              '戻る',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.black87,
+                          side: const BorderSide(color: Color(0xFFCCCCCC)),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: _sending ? null : _onSend,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppDesign.statusOk,
-                              foregroundColor: Colors.white,
-                              disabledBackgroundColor: AppDesign.disabledButton,
-                              disabledForegroundColor: Colors.white70,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              elevation: 0,
-                            ),
-                            child: Text(
-                              _sending ? '送信中…' : '送信',
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
+                        child: const Text(
+                          '戻る',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _sectionTitle(String title) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Text(
+        title,
+        style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+          color: Color(0xFF666666),
         ),
       ),
     );

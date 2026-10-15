@@ -6,6 +6,15 @@ Cursorで実施した開発内容を記録する。
 
 ## 作業記録
 
+### 2026-10-15 — Bluetooth 接続安定化・エラー表示改善
+
+- **目的**: R-5000 共有時の接続不安定を軽減（自動接続は追加しない）
+- **Android**: `connect()` は DOTR 同期完了型と確認のうえ、タイムアウト(20s)・`isConnect` 再確認・切断完了待ち・処理直列化・遅延 `onConnected` 無視
+- **iOS**: 切断完了待ち、Known を成功後保存、BT OFF（`isCentralManagerReady`）、世代番号で遅延コールバック無視
+- **Dart**: `ReaderConnectionSession`（画面横断の状態）、`ReaderConnectionLog`（端末内診断）、エラー文言見直し、接続画面 dispose でスキャンのみ停止（接続維持）
+- **テスト**: `test/connect_error_messages_test.dart` 成功。実機は `docs/Bluetooth接続_実機確認手順.md`
+- **Git**: 未コミット（急ぎ来店納品の未コミット変更は触っていない）
+
 ### 2026-10-08 — 急ぎ来店納品 UI（統合画面＋伝票選択〜確認〜送信）
 
 - **目的**: 伝票なしで先にタグ読取 → 当日未処理から複数選択 → 伝票選択 → 再確認 → 送信、の操作イメージ（API/DB 未接続）

@@ -46,25 +46,3 @@ final List<UrgentReadItem> mockUrgentTodayItems = [
     readAt: DateTime(2026, 10, 8, 9, 12),
   ),
 ];
-
-/// 伝票選択画面のダミー伝票
-const List<UrgentSlipCandidate> mockUrgentSlipCandidates = [
-  UrgentSlipCandidate(
-    id: 'slip1',
-    deliveryNo: '123456',
-    companyName: '○○建設',
-    siteName: '○○工事現場',
-  ),
-  UrgentSlipCandidate(
-    id: 'slip2',
-    deliveryNo: '123457',
-    companyName: '△△建設',
-    siteName: '△△道路工事',
-  ),
-  UrgentSlipCandidate(
-    id: 'slip3',
-    deliveryNo: '123458',
-    companyName: '□□商事',
-    siteName: '□□ビル改修',
-  ),
-];

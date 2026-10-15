@@ -899,20 +899,20 @@ class _SlipListScreenState extends State<SlipListScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        if (_shouldShowRouteGuidance(slip)) ...[
-                          OutlinedButton(
-                            onPressed: () => _openRouteGuidance(context, slip),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: const Color(0xFF333333),
-                              side: const BorderSide(color: AppDesign.navBarBorder),
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        if (_isExchangeSubject(slip.subject)) ...[
+                          if (_shouldShowRouteGuidance(slip)) ...[
+                            OutlinedButton(
+                              onPressed: () => _openRouteGuidance(context, slip),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: const Color(0xFF333333),
+                                side: const BorderSide(color: AppDesign.navBarBorder),
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              child: const Text('経路案内', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                             ),
-                            child: const Text('経路案内', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                          ),
-                          const SizedBox(height: 12),
-                        ],
-                        if (_isExchangeSubject(slip.subject))
+                            const SizedBox(height: 12),
+                          ],
                           Row(
                             children: [
                               Expanded(
@@ -955,8 +955,23 @@ class _SlipListScreenState extends State<SlipListScreen> {
                                 ),
                               ),
                             ],
-                          )
-                        else
+                          ),
+                        ] else ...[
+                          ElevatedButton(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              unawaited(_openSlipLink(slip));
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppDesign.selectedBorder,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              elevation: 0,
+                            ),
+                            child: const Text('ICタグ読取', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                          ),
+                          const SizedBox(height: 12),
                           Row(
                             children: [
                               Expanded(
@@ -971,25 +986,24 @@ class _SlipListScreenState extends State<SlipListScreen> {
                                   child: const Text('戻る', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                                 ),
                               ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: ElevatedButton(
-                                  onPressed: () {
-                                    Navigator.pop(context);
-                                    unawaited(_openSlipLink(slip));
-                                  },
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: AppDesign.selectedBorder,
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(vertical: 14),
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                    elevation: 0,
+                              if (_shouldShowRouteGuidance(slip)) ...[
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: OutlinedButton(
+                                    onPressed: () => _openRouteGuidance(context, slip),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: const Color(0xFF333333),
+                                      side: const BorderSide(color: AppDesign.navBarBorder),
+                                      padding: const EdgeInsets.symmetric(vertical: 14),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                    ),
+                                    child: const Text('経路案内', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                                   ),
-                                  child: const Text('ICタグ読取', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                                 ),
-                              ),
+                              ],
                             ],
                           ),
+                        ],
                       ],
                     ),
                   ),
@@ -1128,13 +1142,13 @@ class _SubjectFilterChip extends StatelessWidget {
     return (background: const Color(0xFFFFF3E0), foreground: const Color(0xFFE65100));
   }
   if (s.contains('引取')) {
-    return (background: const Color(0xFFFFEBEE), foreground: const Color(0xFFC62828));
+    return (background: const Color(0xFFE3F2FD), foreground: const Color(0xFF1565C0));
   }
   if (s == '交換') {
     return (background: const Color(0xFFE8F5E9), foreground: const Color(0xFF2E7D32));
   }
   if (s.contains('配達') || s.contains('納品') || s.contains('レンタル')) {
-    return (background: const Color(0xFFE3F2FD), foreground: const Color(0xFF1565C0));
+    return (background: const Color(0xFFFFEBEE), foreground: const Color(0xFFC62828));
   }
   return (background: const Color(0xFFEEEEEE), foreground: const Color(0xFF616161));
 }

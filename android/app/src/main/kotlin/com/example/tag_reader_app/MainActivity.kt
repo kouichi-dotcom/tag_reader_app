@@ -11,6 +11,8 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
@@ -28,13 +30,33 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 class MainActivity : FlutterActivity(), OnDotrEventListener {
     companion object {
+        private const val TAG = "ReaderBT"
         private const val PREFS_BRIDGE = "tss_rfid_bridge"
         private const val KEY_HIDDEN_BONDED = "hidden_bonded_addresses"
         /// iOS の kKnownDevicesKey 相当。接続に成功したリーダーを保存し、getBondedDevices で OS ペアリングとマージする。
         private const val KEY_KNOWN_READERS_JSON = "known_reader_devices_json"
+
+        /// DOTR の connect() は同期完了型（成功時 onConnected 後に true）。ブロック上限。
+        private const val CONNECT_TIMEOUT_MS = 20_000L
+        private const val DISCONNECT_WAIT_MS = 8_000L
+        private const val DISCONNECT_POLL_MS = 100L
+        private const val PRE_CONNECT_DISCONNECT_WAIT_MS = 8_000L
+    }
+
+    private enum class ConnPhase {
+        IDLE,
+        CONNECTING,
+        CONNECTED,
+        DISCONNECTING,
     }
 
     private val methodChannelName = "tss_rfid/method"
@@ -45,8 +67,12 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
 
     private val rfidUtil: TssRfidUtill = TssRfidUtill()
 
-    /// connect は長時間ブロックし得るため UI スレッドで実行しない（Flutter の接続中インジケータが描画されないのを防ぐ）
+    /// connect / disconnect は長時間ブロックし得るため UI スレッドで実行しない
     private val rfidConnectExecutor = Executors.newSingleThreadExecutor()
+    private val connLock = ReentrantLock()
+    @Volatile private var connPhase = ConnPhase.IDLE
+    /// タイムアウト後の遅延 onConnected を無視するための世代番号
+    private val opGeneration = AtomicLong(0)
 
     private val reqCodeBtPermissions = 1001
 
@@ -120,7 +146,7 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
                 "startBleScan" -> handleStartBleScan(result)
                 "stopBleScan" -> handleStopBleScan(result)
                 "connect" -> handleConnect(call, result)
-                "disconnect" -> result.success(rfidUtil.disconnect())
+                "disconnect" -> handleDisconnect(result)
                 "startInventory" -> handleStartInventory(call, result)
                 "stopInventory" -> runCatching { rfidUtil.stop(); true }.getOrElse { false }.also { result.success(it) }
                 "isConnected" -> result.success(rfidUtil.isConnect())
@@ -424,6 +450,109 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
         }
     }
 
+    private fun deviceHint(name: String, address: String): String {
+        val tail = if (address.length <= 5) address else address.takeLast(5)
+        return "$name(…$tail)"
+    }
+
+    private fun logBt(action: String, resultLabel: String, detail: String? = null, elapsedMs: Long? = null) {
+        val parts = mutableListOf(action, "result=$resultLabel")
+        if (elapsedMs != null) parts.add("elapsedMs=$elapsedMs")
+        if (!detail.isNullOrBlank()) parts.add(detail)
+        Log.i(TAG, parts.joinToString(" | "))
+    }
+
+    private fun stopBleScanInternal() {
+        val scanner = bleScanner
+        bleScanner = null
+        if (scanner != null) {
+            try {
+                scanner.stopScan(bleScanCallback)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /**
+     * SDK disconnect 要求後、isConnect()==false になるまで待つ。
+     * @return true: 未接続を確認できた / false: 上限時間内に確認できず
+     */
+    private fun waitUntilDisconnected(timeoutMs: Long): Boolean {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (rfidUtil.isConnect()) {
+            if (SystemClock.elapsedRealtime() >= deadline) {
+                return false
+            }
+            try {
+                Thread.sleep(DISCONNECT_POLL_MS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return !rfidUtil.isConnect()
+            }
+        }
+        return true
+    }
+
+    private fun handleDisconnect(result: MethodChannel.Result) {
+        val canStart = connLock.withLock {
+            when (connPhase) {
+                ConnPhase.DISCONNECTING -> {
+                    result.error("disconnect_in_progress", "Disconnect already in progress.", null)
+                    false
+                }
+                ConnPhase.CONNECTING -> {
+                    result.error("connect_in_progress", "Connect in progress.", null)
+                    false
+                }
+                else -> {
+                    connPhase = ConnPhase.DISCONNECTING
+                    opGeneration.incrementAndGet()
+                    true
+                }
+            }
+        }
+        if (!canStart) return
+
+        rfidConnectExecutor.execute {
+            val started = SystemClock.elapsedRealtime()
+            logBt("disconnect_start", "begin")
+            try {
+                runCatching { rfidUtil.stop() }
+                val requested = runCatching { rfidUtil.disconnect() }.getOrDefault(false)
+                val confirmed = waitUntilDisconnected(DISCONNECT_WAIT_MS)
+                val elapsed = SystemClock.elapsedRealtime() - started
+                runOnUiThread {
+                    if (confirmed) {
+                        connLock.withLock { connPhase = ConnPhase.IDLE }
+                        logBt("disconnect_done", "ok", "requested=$requested", elapsed)
+                        result.success(true)
+                    } else {
+                        val still = rfidUtil.isConnect()
+                        connLock.withLock {
+                            connPhase = if (still) ConnPhase.CONNECTED else ConnPhase.IDLE
+                        }
+                        logBt("disconnect_done", "incomplete", "stillConnected=$still", elapsed)
+                        result.error(
+                            "disconnect_incomplete",
+                            "Disconnect completion was not confirmed.",
+                            null,
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                val elapsed = SystemClock.elapsedRealtime() - started
+                runOnUiThread {
+                    val still = runCatching { rfidUtil.isConnect() }.getOrDefault(false)
+                    connLock.withLock {
+                        connPhase = if (still) ConnPhase.CONNECTED else ConnPhase.IDLE
+                    }
+                    logBt("disconnect_done", "error", e.message, elapsed)
+                    result.error("disconnect_incomplete", e.message, null)
+                }
+            }
+        }
+    }
+
     private fun handleConnect(call: MethodCall, result: MethodChannel.Result) {
         val name = call.argument<String>("name") ?: ""
         val address = call.argument<String>("address") ?: ""
@@ -444,33 +573,104 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
             return
         }
 
+        val gen = connLock.withLock {
+            when (connPhase) {
+                ConnPhase.CONNECTING -> {
+                    result.error("connect_in_progress", "Connect already in progress.", null)
+                    return
+                }
+                ConnPhase.DISCONNECTING -> {
+                    result.error("disconnect_in_progress", "Disconnect in progress.", null)
+                    return
+                }
+                else -> {
+                    connPhase = ConnPhase.CONNECTING
+                    opGeneration.incrementAndGet()
+                }
+            }
+        }
+
+        val hint = deviceHint(name, address)
         rfidConnectExecutor.execute {
-            runCatching {
-                // iOS と同様: 既存接続のまま別リーダーへ繋ぐと失敗しやすいため、先に切断して短い待機を入れる。
+            val started = SystemClock.elapsedRealtime()
+            logBt("connect_start", "begin", hint)
+            try {
+                // 既存接続があれば完了待ち付きで切断（固定 sleep のみに依存しない）
                 if (rfidUtil.isConnect()) {
                     runCatching { rfidUtil.disconnect() }
-                    Thread.sleep(450)
-                }
-                // スキャン中の接続は失敗しやすいため停止する。
-                val scanner = bleScanner
-                if (scanner != null) {
-                    try {
-                        scanner.stopScan(bleScanCallback)
-                    } catch (_: Exception) {
+                    if (!waitUntilDisconnected(PRE_CONNECT_DISCONNECT_WAIT_MS)) {
+                        logBt("connect_pre_disconnect", "incomplete", hint)
                     }
-                    bleScanner = null
                 }
-                // 接続前に context とリーダー名を設定
-                rfidUtil.initReader(this@MainActivity, name)
-                rfidUtil.connect(address)
-            }.onSuccess { ok ->
-                runOnUiThread {
-                    // 接続成功後に Known を更新。接続ハンドラ内の同期 I/O でメインが詰まると GATT/SDK と競合しやすい
-                    if (ok) scheduleRememberReaderDevice(name, address)
-                    result.success(ok)
+                stopBleScanInternal()
+
+                // SDK 調査: R-5000(DOTR) の connect(String) は接続確立後に onConnected を呼び true を返す同期完了。
+                // 戻り値を接続要求受付と混同しない。ただし長時間ブロックし得るため上限を設ける。
+                val task = FutureTask {
+                    rfidUtil.initReader(this@MainActivity, name)
+                    rfidUtil.connect(address)
                 }
-            }.onFailure { e ->
+                val worker = Thread(task, "tss-rfid-connect")
+                worker.start()
+
+                val okRequested: Boolean = try {
+                    task.get(CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                } catch (te: TimeoutException) {
+                    logBt("connect_timeout", "timeout", hint, SystemClock.elapsedRealtime() - started)
+                    // 遅延完了で状態が壊れないよう世代を進め、安全な範囲で切断を試みる
+                    connLock.withLock { opGeneration.incrementAndGet() }
+                    runCatching { rfidUtil.disconnect() }
+                    waitUntilDisconnected(DISCONNECT_WAIT_MS)
+                    runOnUiThread {
+                        connLock.withLock { connPhase = ConnPhase.IDLE }
+                        result.error("connect_timeout", "Connect timed out.", null)
+                    }
+                    return@execute
+                } catch (e: Exception) {
+                    throw e
+                }
+
+                // タイムアウト後にこの世代が無効化されていないか
+                if (opGeneration.get() != gen) {
+                    logBt("connect_stale", "ignored", hint)
+                    runCatching { rfidUtil.disconnect() }
+                    runOnUiThread {
+                        connLock.withLock {
+                            if (connPhase == ConnPhase.CONNECTING) connPhase = ConnPhase.IDLE
+                        }
+                        result.error("connect_timeout", "Connect timed out.", null)
+                    }
+                    return@execute
+                }
+
+                val actuallyConnected = okRequested && rfidUtil.isConnect()
+                val elapsed = SystemClock.elapsedRealtime() - started
                 runOnUiThread {
+                    if (actuallyConnected) {
+                        connLock.withLock { connPhase = ConnPhase.CONNECTED }
+                        scheduleRememberReaderDevice(name, address)
+                        logBt("connect_success", "ok", hint, elapsed)
+                        result.success(true)
+                    } else {
+                        // 要求は成功と見えても isConnect が false の場合は失敗扱い（誤表示防止）
+                        runCatching { rfidUtil.disconnect() }
+                        connLock.withLock { connPhase = ConnPhase.IDLE }
+                        logBt(
+                            "connect_failed",
+                            "false",
+                            "$hint requested=$okRequested isConnect=${rfidUtil.isConnect()}",
+                            elapsed,
+                        )
+                        result.success(false)
+                    }
+                }
+            } catch (e: Exception) {
+                val elapsed = SystemClock.elapsedRealtime() - started
+                runCatching { rfidUtil.disconnect() }
+                waitUntilDisconnected(2_000L)
+                runOnUiThread {
+                    connLock.withLock { connPhase = ConnPhase.IDLE }
+                    logBt("connect_failed", "error", "${hint} ${e.message}", elapsed)
                     result.error("connect_failed", e.message, null)
                 }
             }
@@ -737,6 +937,17 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
     }
 
     override fun onConnected() {
+        // タイムアウト後の遅延コールバック: CONNECTING/CONNECTED 以外では UI 成功イベントを出さない
+        val phase = connPhase
+        if (phase != ConnPhase.CONNECTING && phase != ConnPhase.CONNECTED) {
+            logBt("onConnected", "ignored_stale", "phase=$phase")
+            return
+        }
+        if (phase == ConnPhase.CONNECTING) {
+            connLock.withLock {
+                if (connPhase == ConnPhase.CONNECTING) connPhase = ConnPhase.CONNECTED
+            }
+        }
         // Best effort: if SDK supports it, turn off success beep first, then lower beeper volume.
         runCatching { trySetGoodReadBeepOff() }
         runCatching { trySetBeeperVolumeMin() }
@@ -748,10 +959,17 @@ class MainActivity : FlutterActivity(), OnDotrEventListener {
     }
 
     override fun onDisconnected() {
+        connLock.withLock {
+            if (connPhase != ConnPhase.DISCONNECTING && connPhase != ConnPhase.CONNECTING) {
+                connPhase = ConnPhase.IDLE
+            }
+        }
         emitEvent(mapOf("type" to "disconnected"))
     }
 
     override fun onLinkLost() {
+        connLock.withLock { connPhase = ConnPhase.IDLE }
+        logBt("link_lost", "event")
         emitEvent(mapOf("type" to "link_lost"))
     }
 

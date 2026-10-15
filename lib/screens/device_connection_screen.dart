@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 import '../mocks/mock_data.dart';
 import '../services/connected_device_storage.dart';
 import '../services/hardware_trigger_mode_storage.dart';
+import '../services/reader_connection_log.dart';
+import '../services/reader_connection_session.dart';
 import '../services/tag_reader_service.dart';
 import '../theme/app_design.dart';
 import '../utils/connect_error_messages.dart';
@@ -15,6 +17,7 @@ import '../widgets/main_flow_nav_bar.dart';
 
 /// 画面 1: タグリーダー接続（design/screen1-connection-wireframe.html 準拠）
 /// スキャン・デバイス一覧・接続・切断
+/// 画面破棄時はスキャン停止のみ（Bluetooth 接続は維持）
 class DeviceConnectionScreen extends StatefulWidget {
   const DeviceConnectionScreen({super.key, this.showBackButton = false});
 
@@ -31,10 +34,12 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
   MockBleDevice? _connectedDevice;
   bool _isScanning = false;
   bool _isConnecting = false;
+  bool _isDisconnecting = false;
   MockBleDevice? _connectingDevice;
   String? _firmwareVersion;
 
   final _reader = TagReaderService.instance;
+  final _session = ReaderConnectionSession.instance;
   StreamSubscription<Map<String, dynamic>>? _sub;
   StreamSubscription<Map<String, dynamic>>? _bleScanSub;
 
@@ -42,8 +47,9 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _session.ensureStarted();
+    _session.addListener(_onSessionChanged);
     _loadSavedConnection();
-    // ペアリング済み一覧はスキャン不要で表示（ネイティブは getBondedDevices、モックは固定リスト）
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadBondedDevices();
     });
@@ -56,11 +62,19 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
           break;
         case 'disconnected':
         case 'link_lost':
+          final linkLost = e['type'] == 'link_lost';
           setState(() {
             _connectedDevice = null;
             _firmwareVersion = null;
+            _isConnecting = false;
+            _isDisconnecting = false;
+            _connectingDevice = null;
           });
-          ConnectedDeviceStorage.clear();
+          if (linkLost && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(linkLostMessageForUser())),
+            );
+          }
           break;
         case 'firmware':
           final v = e['version'] as String?;
@@ -70,20 +84,38 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
     });
   }
 
+  void _onSessionChanged() {
+    if (!mounted) return;
+    // Storage ではなくセッション／SDK 実状態を優先して表示を合わせる
+    if (!_session.isConnected && _connectedDevice != null && !_isDisconnecting) {
+      setState(() {
+        _connectedDevice = null;
+        _firmwareVersion = null;
+      });
+    }
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _session.removeListener(_onSessionChanged);
     _sub?.cancel();
     _bleScanSub?.cancel();
+    // 接続は維持。スキャンと購読のみ解放。
+    if (_reader.supportsNativeRfid && _isScanning) {
+      unawaited(_reader.stopBleScan());
+    }
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
+    // バックグラウンド移行では disconnect しない（仕様）
     if (state == AppLifecycleState.resumed && mounted && _reader.supportsNativeRfid) {
       _loadBondedDevices();
       _loadSavedConnection();
+      unawaited(_session.refreshFromNative());
     }
   }
 
@@ -96,7 +128,9 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
         if (!ok) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Bluetooth権限が必要です。設定から許可してください。')),
+              SnackBar(content: Text(connectFailureMessageForUser(
+                PlatformException(code: 'permission_required'),
+              ))),
             );
           }
           return;
@@ -116,12 +150,13 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
       }
     } on PlatformException catch (e) {
       if (!mounted) return;
-      if (e.code == 'permission_required') {
+      if (e.code == 'permission_required' || e.code == 'bluetooth_off') {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Bluetooth権限が必要です。設定から許可してください。')),
+          SnackBar(content: Text(connectFailureMessageForUser(e))),
         );
-      } else if (e.code == 'bluetooth_off') {
-        await _promptEnableBluetooth();
+        if (e.code == 'bluetooth_off') {
+          await _promptEnableBluetooth();
+        }
       } else {
         debugPrint('getBondedDevices failed: $e');
       }
@@ -153,19 +188,25 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
   Future<void> _loadSavedConnection() async {
     final id = await ConnectedDeviceStorage.getId();
     final name = await ConnectedDeviceStorage.getName();
-    if (id == null || name == null || !mounted) return;
-    // Android: 実態の接続状態を確認。アプリ再起動後は接続が切れているので未接続に合わせる
+    if (!mounted) return;
     if (_reader.supportsNativeRfid) {
       final actuallyConnected = await _reader.isConnected();
-      if (!actuallyConnected && mounted) {
-        setState(() {
-          _connectedDevice = null;
-          _firmwareVersion = null;
-        });
+      if (!actuallyConnected) {
+        if (mounted) {
+          setState(() {
+            _connectedDevice = null;
+            _firmwareVersion = null;
+          });
+        }
         await ConnectedDeviceStorage.clear();
         return;
       }
+      if (id != null && name != null && mounted) {
+        setState(() => _connectedDevice = MockBleDevice(id: id, name: name));
+      }
+      return;
     }
+    if (id == null || name == null) return;
     if (mounted) setState(() => _connectedDevice = MockBleDevice(id: id, name: name));
   }
 
@@ -176,7 +217,9 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
         final ok = await _reader.requestBluetoothPermissions();
         if (!ok && mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Bluetooth権限が必要です。設定から許可してください。')),
+            SnackBar(content: Text(connectFailureMessageForUser(
+              PlatformException(code: 'permission_required'),
+            ))),
           );
           setState(() => _isScanning = false);
           return;
@@ -211,7 +254,6 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
         });
         await _reader.startBleScan();
       } else {
-        // Windows等: 画面モック用（実機と同じ2セクション・同じデザイン）
         setState(() {
           _bondedDevices = List.from(mockBleDevices);
           _scannedBleDevices = List.from(mockScannedBleDevices);
@@ -219,16 +261,11 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
       }
     } on PlatformException catch (e) {
       if (mounted) {
-        if (e.code == 'permission_required') {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Bluetooth権限が必要です。設定から許可してください。')),
-          );
-        } else if (e.code == 'bluetooth_off') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(connectFailureMessageForUser(e))),
+        );
+        if (e.code == 'bluetooth_off') {
           await _promptEnableBluetooth();
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('スキャン失敗: $e')),
-          );
         }
         setState(() => _isScanning = false);
       }
@@ -253,11 +290,29 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
     if (mounted) setState(() => _isScanning = false);
   }
 
+  bool get _buttonsLocked => _isConnecting || _isDisconnecting || _session.isBusy;
+
   Future<void> _connect(MockBleDevice device) async {
-    // Windows等はモック
     if (!_reader.supportsNativeRfid) {
       setState(() => _connectedDevice = device);
       ConnectedDeviceStorage.save(device.id, device.name);
+      return;
+    }
+
+    if (_buttonsLocked) {
+      final code = _isDisconnecting ||
+              _session.phase == ReaderConnectionPhase.disconnecting
+          ? 'disconnect_in_progress'
+          : 'connect_in_progress';
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(connectFailureMessageForUser(
+              PlatformException(code: code),
+            )),
+          ),
+        );
+      }
       return;
     }
 
@@ -265,24 +320,55 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
       _isConnecting = true;
       _connectingDevice = device;
     });
-    // ネイティブ connect がメインスレッドを占有すると 1 フレームも描画されないことがあるため、
-    // 接続処理の前に 1 フレーム分待ってスピナーを表示する。
+    _session.markConnecting(name: device.name, address: device.id);
     await SchedulerBinding.instance.endOfFrame;
 
-    // 別リーダーへ切り替えるときは先に切断（SDK 側の既存セッション残り対策）
+    final hint = ReaderConnectionLog.deviceHintFrom(
+      name: device.name,
+      address: device.id,
+    );
+    final sw = Stopwatch()..start();
+    ReaderConnectionLog.write(action: 'connect_start', deviceHint: hint);
+
+    // 別リーダーへ切り替えるときは先に切断完了を確認
     final previous = _connectedDevice;
     if (previous != null && previous.id != device.id) {
       try {
+        setState(() => _isDisconnecting = true);
+        _session.markDisconnecting();
         await _reader.disconnect();
-      } catch (_) {}
-      if (mounted) {
-        setState(() {
-          _connectedDevice = null;
-          _firmwareVersion = null;
-        });
+      } on PlatformException catch (e) {
+        ReaderConnectionLog.write(
+          action: 'pre_connect_disconnect',
+          result: 'error',
+          errorCode: e.code,
+          deviceHint: hint,
+          elapsedMs: sw.elapsedMilliseconds,
+        );
+        if (mounted) {
+          setState(() {
+            _isConnecting = false;
+            _isDisconnecting = false;
+            _connectingDevice = null;
+          });
+          _session.markConnectFailed(errorCode: e.code);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(connectFailureMessageForUser(e))),
+          );
+        }
+        return;
+      } catch (_) {
+      } finally {
+        if (mounted) {
+          setState(() {
+            _connectedDevice = null;
+            _firmwareVersion = null;
+            _isDisconnecting = false;
+          });
+        }
+        await ConnectedDeviceStorage.clear();
+        _session.markDisconnected();
       }
-      await ConnectedDeviceStorage.clear();
-      await Future<void>.delayed(const Duration(milliseconds: 300));
     }
 
     try {
@@ -293,6 +379,21 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
         _connectingDevice = null;
       });
       if (!ok) {
+        _session.markConnectFailed(errorCode: 'connect_failed');
+        ReaderConnectionLog.write(
+          action: 'connect_failed',
+          result: 'false',
+          deviceHint: hint,
+          elapsedMs: sw.elapsedMilliseconds,
+        );
+        // 失敗後のクリーンアップ（スキャン残・状態）
+        await _stopScan();
+        final still = await _reader.isConnected();
+        if (still) {
+          try {
+            await _reader.disconnect();
+          } catch (_) {}
+        }
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -311,6 +412,13 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
         _firmwareVersion = (fw != null && fw.isNotEmpty) ? fw : _firmwareVersion;
       });
       await ConnectedDeviceStorage.save(device.id, device.name);
+      _session.markConnected(name: device.name, address: device.id);
+      ReaderConnectionLog.write(
+        action: 'connect_success',
+        result: 'ok',
+        deviceHint: hint,
+        elapsedMs: sw.elapsedMilliseconds,
+      );
       final forced = await HardwareTriggerModeStorage.forceToggleIfSr7AndHold();
       if (forced && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -321,11 +429,21 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
         );
       }
     } on PlatformException catch (e) {
+      ReaderConnectionLog.write(
+        action: 'connect_failed',
+        result: 'error',
+        errorCode: e.code,
+        detail: e.message,
+        deviceHint: hint,
+        elapsedMs: sw.elapsedMilliseconds,
+      );
+      await _stopScan();
       if (mounted) {
         setState(() {
           _isConnecting = false;
           _connectingDevice = null;
         });
+        _session.markConnectFailed(errorCode: e.code);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(connectFailureMessageForUser(e)),
@@ -334,11 +452,20 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
         );
       }
     } catch (e) {
+      ReaderConnectionLog.write(
+        action: 'connect_failed',
+        result: 'error',
+        detail: e.toString(),
+        deviceHint: hint,
+        elapsedMs: sw.elapsedMilliseconds,
+      );
+      await _stopScan();
       if (mounted) {
         setState(() {
           _isConnecting = false;
           _connectingDevice = null;
         });
+        _session.markConnectFailed();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(connectFailureMessageForUser(e)),
@@ -350,22 +477,92 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
   }
 
   Future<void> _disconnect() async {
+    if (_buttonsLocked && !_isDisconnecting) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(connectFailureMessageForUser(
+              PlatformException(code: 'connect_in_progress'),
+            )),
+          ),
+        );
+      }
+      return;
+    }
+    if (_isDisconnecting) return;
+
+    setState(() => _isDisconnecting = true);
+    _session.markDisconnecting();
+    final sw = Stopwatch()..start();
+    final hint = ReaderConnectionLog.deviceHintFrom(
+      name: _connectedDevice?.name,
+      address: _connectedDevice?.id,
+    );
+    ReaderConnectionLog.write(action: 'disconnect_start', deviceHint: hint);
+
     try {
       if (_reader.supportsNativeRfid) {
+        try {
+          await _reader.stopInventory();
+        } catch (_) {}
         await _reader.disconnect();
       }
-    } finally {
+      ReaderConnectionLog.write(
+        action: 'disconnect_done',
+        result: 'ok',
+        deviceHint: hint,
+        elapsedMs: sw.elapsedMilliseconds,
+      );
       if (mounted) {
         setState(() {
           _connectedDevice = null;
           _firmwareVersion = null;
+          _isDisconnecting = false;
         });
       }
-      ConnectedDeviceStorage.clear();
+      await ConnectedDeviceStorage.clear();
+      _session.markDisconnected();
+    } on PlatformException catch (e) {
+      ReaderConnectionLog.write(
+        action: 'disconnect_done',
+        result: 'error',
+        errorCode: e.code,
+        detail: e.message,
+        deviceHint: hint,
+        elapsedMs: sw.elapsedMilliseconds,
+      );
+      // 完了未確認時は「切断完了」と断定しない
+      final still = _reader.supportsNativeRfid && await _reader.isConnected();
+      if (!still) {
+        await ConnectedDeviceStorage.clear();
+        _session.markDisconnected();
+      } else {
+        _session.markDisconnectUncertain();
+      }
+      if (!mounted) return;
+      setState(() {
+        _isDisconnecting = false;
+        if (!still) {
+          _connectedDevice = null;
+          _firmwareVersion = null;
+        }
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(connectFailureMessageForUser(e)),
+          duration: const Duration(seconds: 8),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isDisconnecting = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(connectFailureMessageForUser(e))),
+        );
+      }
     }
   }
 
-  /// 接続中の「ぐるぐる」。iOS は CupertinoActivityIndicator、それ以外は色付き CircularProgressIndicator。
   Widget _connectionProgressIndicator(BuildContext context, {double size = 22}) {
     final isIOS = Theme.of(context).platform == TargetPlatform.iOS;
     if (isIOS) {
@@ -476,7 +673,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
     final isConnected = _connectedDevice?.id == device.id;
     final isThisConnecting = _connectingDevice?.id == device.id;
     final connectButton = ElevatedButton(
-      onPressed: _isConnecting
+      onPressed: _buttonsLocked
           ? null
           : () {
               _connect(device);
@@ -492,7 +689,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
-        leading: isThisConnecting
+        leading: isThisConnecting || (isConnected && _isDisconnecting)
             ? _connectionProgressIndicator(context, size: 26)
             : Icon(
                 isConnected ? Icons.bluetooth_connected : Icons.bluetooth,
@@ -502,15 +699,17 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
         subtitle: Text(device.id, style: const TextStyle(fontSize: 12)),
         trailing: isConnected
             ? TextButton(
-                onPressed: () {
-                  _disconnect();
-                },
+                onPressed: _buttonsLocked && !_isDisconnecting
+                    ? null
+                    : () {
+                        _disconnect();
+                      },
                 style: TextButton.styleFrom(
                   backgroundColor: const Color(0xFFE0E0E0),
                   foregroundColor: const Color(0xFF333333),
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 ),
-                child: const Text('切断'),
+                child: Text(_isDisconnecting ? '切断中…' : '切断'),
               )
             : isThisConnecting
                 ? Padding(
@@ -533,7 +732,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
                         children: [
                           connectButton,
                           IconButton(
-                            onPressed: onDelete,
+                            onPressed: _buttonsLocked ? null : onDelete,
                             icon: const Icon(Icons.delete_outline),
                             tooltip: '削除',
                             color: Colors.red,
@@ -567,52 +766,56 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
                   title: 'タグリーダー接続',
                   onBack: () => Navigator.of(context).pop(),
                 ),
-                // 接続状態
                 Container(
                   padding: const EdgeInsets.all(16),
                   color: _connectedDevice != null
                       ? AppDesign.linkedBackground
-                      : _isConnecting
+                      : _isConnecting || _isDisconnecting
                           ? const Color(0xFFE8F4FD)
                           : const Color(0xFFF0F0F0),
                   child: Row(
                     children: [
-                      if (_isConnecting)
+                      if (_isConnecting || _isDisconnecting)
                         _connectionProgressIndicator(context, size: 28)
                       else
                         Icon(
                           _connectedDevice != null ? Icons.link : Icons.link_off,
                           size: 28,
-                          color: _connectedDevice != null ? AppDesign.statusOk : const Color(0xFF666666),
+                          color: _connectedDevice != null
+                              ? AppDesign.statusOk
+                              : const Color(0xFF666666),
                         ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          _isConnecting
-                              ? '接続中: ${_connectingDevice?.name ?? ''}'
-                              : _connectedDevice != null
-                                  ? '接続中: ${_connectedDevice!.name}${_firmwareVersion != null ? '（FW: $_firmwareVersion）' : ''}'
-                                  : '未接続',
+                          _isDisconnecting
+                              ? '切断中…'
+                              : _isConnecting
+                                  ? '接続中: ${_connectingDevice?.name ?? ''}'
+                                  : _connectedDevice != null
+                                      ? '接続中: ${_connectedDevice!.name}${_firmwareVersion != null ? '（FW: $_firmwareVersion）' : ''}'
+                                      : '未接続',
                           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
                         ),
                       ),
                       if (_connectedDevice != null && !_isConnecting)
                         TextButton(
-                          onPressed: () {
-                            _disconnect();
-                          },
+                          onPressed: _buttonsLocked && !_isDisconnecting
+                              ? null
+                              : () {
+                                  _disconnect();
+                                },
                           style: TextButton.styleFrom(
                             backgroundColor: const Color(0xFFE0E0E0),
                             foregroundColor: const Color(0xFF333333),
                             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                           ),
-                          child: const Text('切断'),
+                          child: Text(_isDisconnecting ? '切断中…' : '切断'),
                         ),
                     ],
                   ),
                 ),
                 const SizedBox(height: 8),
-                // 周辺スキャン（ペアリング済みは _loadBondedDevices で先に表示）
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: SizedBox(

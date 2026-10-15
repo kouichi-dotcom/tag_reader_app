@@ -7,10 +7,13 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'config/api_config.dart';
 import 'screens/home_screen.dart';
+import 'services/reader_connection_session.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   _initSqliteForDesktop();
+  // 画面遷移後も切断イベントを処理（自動接続はしない）
+  ReaderConnectionSession.instance.ensureStarted();
   runApp(const TagReaderApp());
 }
 
