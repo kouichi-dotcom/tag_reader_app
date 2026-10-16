@@ -1,11 +1,15 @@
 ---
-description: アプリ/APIの起動コマンド。ユーザーが「起動して」と言ったらこの手順で実行する
+description: アプリ/APIの起動コマンド。ユーザーが「起動して」と明示したときこの手順で実行する
 alwaysApply: true
 ---
 
 # 起動コマンド（tag_reader_app / TagReaderApi）
 
-ユーザーが起動を頼んだら、説明だけで終わらせず **Shell で実際に起動**する。長時間プロセスは `block_until_ms: 0` でバックグラウンド起動し、必要なら別ターミナルで API とアプリを分ける。詳細ドキュメント: `docs/起動コマンド一覧.md`
+**前提:** `AGENT.md` の「Cursor作業制御（最優先）」に従う。調査・確認・分析のみの指示では起動しない。
+
+ユーザーが **「起動して」等で起動を明示的に依頼したとき**、説明だけで終わらせず **Shell で実際に起動**する。長時間プロセスは `block_until_ms: 0` でバックグラウンド起動し、必要なら別ターミナルで API とアプリを分ける。詳細ドキュメント: `docs/起動コマンド一覧.md`
+
+「起動して」に必要なビルドは含めてよい。既存アプリの上書きなど重大な影響がある場合は事前確認する。
 
 ## パス
 
@@ -48,9 +52,12 @@ Android 実機は **`--flavor` + `--dart-define=FLAVOR` + `--dart-define=APP_ENV
 
 詳細: `C:\dev\TagReaderApi\.cursor\rules\deploy-azure.mdc` / `TagReaderApi/docs/本番読取版_基準設定.md`
 
-## Android 実機実装（アプリ）
+## Android 実機への反映（アプリ）
 
-「Androidに実装して」等 → **コード実装後**に `flutter clean` + staging で `flutter run`（詳細: `.cursor/rules/deploy-android.mdc`）
+「実装して」だけでは clean / build / run しない。実機反映は次のいずれかが明示されたときのみ（詳細: `.cursor/rules/deploy-android.mdc`）。
+
+- 「実機に入れて」「実機にビルドして」「Androidに反映して」等
+- 「ビルドして」「起動して」「実機テストして」
 
 ## 注意
 
