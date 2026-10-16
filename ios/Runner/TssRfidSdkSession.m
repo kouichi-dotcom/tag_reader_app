@@ -2,6 +2,7 @@
 #import "TSS_SDK.h"
 #import "DOTR_Util.h"
 #import <CoreBluetooth/CoreBluetooth.h>
+#import <os/log.h>
 
 static NSString *const kKnownDevicesKey = @"tss_rfid_ios_known_devices";
 static NSString *const kHiddenAddressesKey = @"tss_rfid_ios_hidden_reader_addresses";
@@ -9,6 +10,54 @@ static NSString *const kHiddenAddressesKey = @"tss_rfid_ios_hidden_reader_addres
 // EPC のクールダウン（重複通知抑制）は一旦無効化中。
 // 復活する場合は、下記定数と onInventoryEPC 内の該当ブロックを戻す。
 // static const int64_t kEpcCooldownMs = 30000;
+
+/// 診断ログ専用。接続処理の順序・SDK 呼び出しを変えないこと。
+static NSString *TssRfidAddrTail(NSString *address) {
+  NSString *a = [address stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  if (a.length == 0) return @"";
+  if (a.length <= 5) return a;
+  return [a substringFromIndex:a.length - 5];
+}
+
+static NSString *TssRfidPeripheralStateName(CBPeripheralState state) {
+  switch (state) {
+    case CBPeripheralStateDisconnected: return @"disconnected";
+    case CBPeripheralStateConnecting: return @"connecting";
+    case CBPeripheralStateConnected: return @"connected";
+    case CBPeripheralStateDisconnecting: return @"disconnecting";
+    default: return [NSString stringWithFormat:@"unknown(%ld)", (long)state];
+  }
+}
+
+// EventChannel 経由で Flutter コンソールへも流すための弱参照（ログ専用）
+static __weak TssRfidSdkSession *sBtLogSession;
+
+// TssRfidBtLog から emit を呼ぶための前方宣言（実装は @implementation 内）
+@interface TssRfidSdkSession (BtDiagEmit)
+- (void)emit:(NSDictionary *)event;
+@end
+
+static void TssRfidBtLog(NSString *event, NSString *detail) {
+  // NSISO8601DateFormatter はスレッドセーフではないため都度生成。ログ専用で接続をブロックしない。
+  NSISO8601DateFormatter *fmt = [[NSISO8601DateFormatter alloc] init];
+  fmt.formatOptions = NSISO8601DateFormatWithInternetDateTime |
+                      NSISO8601DateFormatWithFractionalSeconds;
+  NSString *iso = [fmt stringFromDate:[NSDate date]] ?: @"";
+  NSString *thr = [NSThread isMainThread] ? @"main" : @"bg";
+  NSString *line = detail.length > 0
+      ? [NSString stringWithFormat:@"[ReaderBT-iOS] %@ | thr=%@ | %@ | %@", iso, thr, event, detail]
+      : [NSString stringWithFormat:@"[ReaderBT-iOS] %@ | thr=%@ | %@", iso, thr, event];
+  // Flutter run / Xcode のいずれでも拾えるよう NSLog + stderr + os_log に出す（処理は待たない）
+  NSLog(@"%@", line);
+  fprintf(stderr, "%s\n", line.UTF8String);
+  fflush(stderr);
+  os_log(OS_LOG_DEFAULT, "%{public}s", line.UTF8String);
+  // UI / 接続ロジックは変更せず、診断行だけ EventChannel へ（Plugin で print）
+  TssRfidSdkSession *session = sBtLogSession;
+  if (session != nil) {
+    [session emit:@{@"type": @"bt_diag", @"line": line}];
+  }
+}
 
 static BOOL TssRfidIsLikelyReaderName(NSString *name) {
   NSString *n = [name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -60,6 +109,8 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
 
 /// 削除済み（非表示化）端末は、名前判定で ble_device_found を捨てないためのキャッシュ
 @property (nonatomic, strong) NSSet<NSString *> *scanHiddenSet;
+
+- (void)emit:(NSDictionary *)event;
 @end
 
 @implementation TssRfidSdkSession
@@ -78,6 +129,8 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
   if (self) {
     _reader = [TSS_SDK shared];
     [_reader setDelegate:self];
+    // 調査用の一時設定。公式サンプルと同様、connect 前に有効化する。本番適用しない。
+    [_reader setDebugMode:NO];
     _epcLastNotifiedAtMs = [NSMutableDictionary dictionary];
     _discoveredPeripheralsByUuid = [NSMutableDictionary dictionary];
     _connectLock = [[NSLock alloc] init];
@@ -85,6 +138,7 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
     _connectGeneration = 0;
     _activeConnectGeneration = 0;
     _isDisconnecting = NO;
+    sBtLogSession = self;
   }
   return self;
 }
@@ -201,9 +255,18 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
 - (BOOL)connectWithName:(NSString *)name
                 address:(NSString *)address
                outError:(NSError *__autoreleasing *)outError {
+  TssRfidBtLog(@"connect_lock_acquire",
+               [NSString stringWithFormat:@"device=%@(…%@)",
+                                          name ?: @"",
+                                          TssRfidAddrTail(address)]);
   [self.connectLock lock];
   @try {
-    return [self connectWithNameLocked:name address:address outError:outError];
+    BOOL ok = [self connectWithNameLocked:name address:address outError:outError];
+    TssRfidBtLog(@"connect_lock_release",
+                 [NSString stringWithFormat:@"ok=%d flutterErrorCode=%ld",
+                                            ok ? 1 : 0,
+                                            (long)(outError && *outError ? (*outError).code : 0)]);
+    return ok;
   } @finally {
     [self.connectLock unlock];
   }
@@ -212,7 +275,14 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
 - (BOOL)connectWithNameLocked:(NSString *)name
                       address:(NSString *)address
                      outError:(NSError *__autoreleasing *)outError {
+  TssRfidBtLog(@"connect_start",
+               [NSString stringWithFormat:@"name=%@ addrTail=…%@ readerInit=%@ activeGen=%ld",
+                                          name ?: @"",
+                                          TssRfidAddrTail(address),
+                                          self.reader != nil ? @"yes" : @"no",
+                                          (long)self.activeConnectGeneration]);
   if (name.length == 0 || address.length == 0) {
+    TssRfidBtLog(@"connect_reject", @"reason=empty_name_or_address code=10");
     if (outError) {
       *outError = [NSError errorWithDomain:@"TssRfidSdkSession" code:10
                                   userInfo:@{NSLocalizedDescriptionKey: @"端末情報が不正です。一覧から接続し直してください。"}];
@@ -221,22 +291,56 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
   }
   NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:address];
   if (!uuid) {
+    TssRfidBtLog(@"connect_reject", @"reason=invalid_uuid code=11");
     if (outError) {
       *outError = [NSError errorWithDomain:@"TssRfidSdkSession" code:11
                                   userInfo:@{NSLocalizedDescriptionKey: @"端末の識別子が正しくありません。スキャンで表示された端末から接続してください。"}];
     }
     return NO;
   }
+  NSString *peripheralSource = @"none";
+  BOOL fromRecentScan = NO;
   CBPeripheral *p = self.discoveredPeripheralsByUuid[address];
+  if (p != nil) {
+    peripheralSource = @"cache";
+    fromRecentScan = YES;
+    TssRfidBtLog(@"peripheral_resolve",
+                 [NSString stringWithFormat:@"source=cache fromScan=1 state=%@ pName=%@",
+                                            TssRfidPeripheralStateName(p.state),
+                                            p.name ?: @""]);
+  }
   if (p == nil) {
     NSArray *rets = [self.reader retrievePeripheralsWithIdentifiers:@[uuid]];
     p = rets.firstObject;
+    if (p != nil) {
+      peripheralSource = @"retrieve";
+      fromRecentScan = NO;
+      TssRfidBtLog(@"peripheral_resolve",
+                   [NSString stringWithFormat:@"source=retrieve fromScan=0 state=%@ pName=%@",
+                                              TssRfidPeripheralStateName(p.state),
+                                              p.name ?: @""]);
+    }
   }
   if (!p) {
     // 手動スキャンなしでも接続できるよう、短時間だけスキャンして同じ UUID を捕捉する
+    TssRfidBtLog(@"peripheral_scan_wait_start",
+                 [NSString stringWithFormat:@"addrTail=…%@ timeoutSec=12", TssRfidAddrTail(address)]);
     p = [self waitForPeripheralWithUuidString:address timeoutSec:12.0];
+    if (p != nil) {
+      peripheralSource = @"scan";
+      fromRecentScan = YES;
+      TssRfidBtLog(@"peripheral_resolve",
+                   [NSString stringWithFormat:@"source=scan fromScan=1 state=%@ pName=%@",
+                                              TssRfidPeripheralStateName(p.state),
+                                              p.name ?: @""]);
+    } else {
+      TssRfidBtLog(@"peripheral_scan_wait_timeout",
+                   [NSString stringWithFormat:@"addrTail=…%@", TssRfidAddrTail(address)]);
+    }
   }
   if (!p) {
+    TssRfidBtLog(@"connect_reject",
+                 [NSString stringWithFormat:@"reason=not_found source=%@ code=12", peripheralSource]);
     if (outError) {
       *outError = [NSError errorWithDomain:@"TssRfidSdkSession" code:12
                                   userInfo:@{
@@ -252,7 +356,15 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
   NSString *trimName = [name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
   NSString *pName = p.name ? [p.name stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] : @"";
   NSString *readerName = (pName.length > 0) ? pName : trimName;
+  TssRfidBtLog(@"peripheral_ready",
+               [NSString stringWithFormat:@"source=%@ fromScan=%d state=%@ readerName=%@ flutterName=%@",
+                                          peripheralSource,
+                                          fromRecentScan ? 1 : 0,
+                                          TssRfidPeripheralStateName(p.state),
+                                          readerName ?: @"",
+                                          trimName ?: @""]);
   if (readerName.length == 0) {
+    TssRfidBtLog(@"connect_reject", @"reason=empty_reader_name code=16");
     if (outError) {
       *outError = [NSError errorWithDomain:@"TssRfidSdkSession" code:16
                                   userInfo:@{NSLocalizedDescriptionKey: @"端末名を取得できませんでした。「新しいタグリーダーとペアリング設定」でスキャンし、表示された端末から接続してください。"}];
@@ -261,6 +373,7 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
   }
 
   if (![self isBluetoothPoweredOn]) {
+    TssRfidBtLog(@"connect_reject", @"reason=bluetooth_off code=17");
     if (outError) {
       *outError = [NSError errorWithDomain:@"TssRfidSdkSession" code:17
                                   userInfo:@{NSLocalizedDescriptionKey: @"BluetoothがOFFです。スマホのBluetoothをONにしてください。"}];
@@ -273,11 +386,15 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
   TssRfidPerformOnMain(^{
     wasConnected = [self.reader isConnect];
     if (wasConnected) {
+      TssRfidBtLog(@"pre_connect_disconnect", @"wasConnected=1 calling_disconnect");
       [self.reader disconnect];
+    } else {
+      TssRfidBtLog(@"pre_connect_disconnect", @"wasConnected=0 skip");
     }
   });
   if (wasConnected) {
     (void)[self waitUntilDisconnectedLockedWithTimeoutSec:8.0];
+    TssRfidBtLog(@"pre_connect_disconnect_wait_done", @"timeoutSec=8");
   }
 
   self.connectGeneration += 1;
@@ -287,17 +404,37 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
   self.connectWaitOutcome = NO;
   dispatch_semaphore_t sem = dispatch_semaphore_create(0);
   self.pendingConnectSem = sem;
+  TssRfidBtLog(@"connect_generation",
+               [NSString stringWithFormat:@"gen=%ld pendingConnectSem=1", (long)gen]);
 
   dispatch_async(dispatch_get_main_queue(), ^{
     // 機種によっては scan 中接続で失敗率が上がるため、接続前に明示停止する。
+    TssRfidBtLog(@"sdk_stop_scan",
+                 [NSString stringWithFormat:@"gen=%ld", (long)gen]);
     [self.reader stopScan];
     // メインで sleep すると UI が固まるため、少し遅らせてから init/connect
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
       if (self.activeConnectGeneration != gen) {
+        TssRfidBtLog(@"sdk_connect_aborted_stale_gen",
+                     [NSString stringWithFormat:@"expectedGen=%ld activeGen=%ld",
+                                                (long)gen,
+                                                (long)self.activeConnectGeneration]);
         return;
       }
+      TssRfidBtLog(@"sdk_init_reader",
+                   [NSString stringWithFormat:@"gen=%ld readerName=%@", (long)gen, readerName ?: @""]);
       [self.reader initReader:readerName];
-      if (![self.reader connect:p]) {
+      TssRfidBtLog(@"sdk_connect_call_start",
+                   [NSString stringWithFormat:@"gen=%ld pState=%@ pName=%@",
+                                              (long)gen,
+                                              TssRfidPeripheralStateName(p.state),
+                                              p.name ?: @""]);
+      BOOL connectRequested = [self.reader connect:p];
+      TssRfidBtLog(@"sdk_connect_return",
+                   [NSString stringWithFormat:@"gen=%ld connectReturn=%d",
+                                              (long)gen,
+                                              connectRequested ? 1 : 0]);
+      if (!connectRequested) {
         [self finishConnectWithSuccess:NO
                                  generation:gen
                                      error:[NSError errorWithDomain:@"TssRfidSdkSession" code:13
@@ -306,23 +443,37 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
     });
   });
 
+  TssRfidBtLog(@"semaphore_wait_start",
+               [NSString stringWithFormat:@"gen=%ld timeoutSec=20 pendingConnectSem=1", (long)gen]);
   dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20.0 * NSEC_PER_SEC));
   long result = dispatch_semaphore_wait(sem, timeout);
   if (result != 0) {
+    TssRfidBtLog(@"semaphore_wait_timeout",
+                 [NSString stringWithFormat:@"gen=%ld reason=timeout", (long)gen]);
     // タイムアウト後の遅延 onConnected を無効化
     self.activeConnectGeneration = -1;
     self.pendingConnectSem = nil;
+    TssRfidBtLog(@"timeout_disconnect_call", @"calling_sdk_disconnect");
     TssRfidPerformOnMain(^{
       [self.reader disconnect];
     });
     (void)[self waitUntilDisconnectedLockedWithTimeoutSec:3.0];
+    TssRfidBtLog(@"flutter_result", @"ok=0 code=14 connect_timeout");
     if (outError) {
       *outError = [NSError errorWithDomain:@"TssRfidSdkSession" code:14
                                   userInfo:@{NSLocalizedDescriptionKey: @"接続が完了しませんでした。タグリーダーの電源と他の端末の接続状況を確認してください。"}];
     }
     return NO;
   }
+  TssRfidBtLog(@"semaphore_wait_done",
+               [NSString stringWithFormat:@"gen=%ld reason=signaled outcome=%d errCode=%ld",
+                                          (long)gen,
+                                          self.connectWaitOutcome ? 1 : 0,
+                                          (long)(self.pendingConnectError ? self.pendingConnectError.code : 0)]);
   if (!self.connectWaitOutcome) {
+    NSInteger errCode = self.pendingConnectError ? self.pendingConnectError.code : 15;
+    TssRfidBtLog(@"flutter_result",
+                 [NSString stringWithFormat:@"ok=0 code=%ld connect_failed", (long)errCode]);
     if (outError) {
       *outError = self.pendingConnectError ?: [NSError errorWithDomain:@"TssRfidSdkSession" code:15
                                                               userInfo:@{NSLocalizedDescriptionKey: @"タグリーダーに接続できませんでした。もう一度お試しください。"}];
@@ -331,6 +482,7 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
     return NO;
   }
   self.pendingConnectError = nil;
+  TssRfidBtLog(@"flutter_result", @"ok=1");
   return YES;
 }
 
@@ -340,13 +492,27 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
 
 - (void)finishConnectWithSuccess:(BOOL)ok generation:(NSInteger)generation error:(NSError *)err {
   if (generation != self.activeConnectGeneration) {
+    TssRfidBtLog(@"semaphore_signal_ignored_stale",
+                 [NSString stringWithFormat:@"ok=%d gen=%ld activeGen=%ld",
+                                            ok ? 1 : 0,
+                                            (long)generation,
+                                            (long)self.activeConnectGeneration]);
     return;
   }
   if (self.pendingConnectSem) {
     self.connectWaitOutcome = ok;
     self.pendingConnectError = err;
+    TssRfidBtLog(@"semaphore_signal",
+                 [NSString stringWithFormat:@"ok=%d gen=%ld errCode=%ld msg=%@",
+                                            ok ? 1 : 0,
+                                            (long)generation,
+                                            (long)(err ? err.code : 0),
+                                            err.localizedDescription ?: @""]);
     dispatch_semaphore_signal(self.pendingConnectSem);
     self.pendingConnectSem = nil;
+  } else {
+    TssRfidBtLog(@"semaphore_signal_no_pending",
+                 [NSString stringWithFormat:@"ok=%d gen=%ld", ok ? 1 : 0, (long)generation]);
   }
 }
 
@@ -355,9 +521,14 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
 }
 
 - (BOOL)disconnectWithError:(NSError *__autoreleasing *)outError {
+  TssRfidBtLog(@"disconnect_lock_acquire",
+               [NSString stringWithFormat:@"activeGen=%ld pendingConnectSem=%d",
+                                          (long)self.activeConnectGeneration,
+                                          self.pendingConnectSem != nil ? 1 : 0]);
   [self.connectLock lock];
   @try {
     if (self.isDisconnecting) {
+      TssRfidBtLog(@"disconnect_reject", @"reason=already_disconnecting code=40");
       if (outError) {
         *outError = [NSError errorWithDomain:@"TssRfidSdkSession" code:40
                                     userInfo:@{NSLocalizedDescriptionKey: @"現在、切断処理中です。"}];
@@ -371,6 +542,7 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
       self.connectWaitOutcome = NO;
       self.pendingConnectError = [NSError errorWithDomain:@"TssRfidSdkSession" code:41
                                                 userInfo:@{NSLocalizedDescriptionKey: @"切断処理のため接続を中止しました。"}];
+      TssRfidBtLog(@"disconnect_cancel_pending_connect", @"signaling_pendingConnectSem code=41");
       dispatch_semaphore_signal(self.pendingConnectSem);
       self.pendingConnectSem = nil;
     }
@@ -379,27 +551,34 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
     TssRfidPerformOnMain(^{
       already = ![self.reader isConnect];
       if (!already) {
+        TssRfidBtLog(@"disconnect_sdk_call", @"stop+disconnect");
         [self.reader stop];
         [self.reader disconnect];
+      } else {
+        TssRfidBtLog(@"disconnect_sdk_call", @"already_disconnected skip");
       }
     });
     if (already) {
       self.isDisconnecting = NO;
+      TssRfidBtLog(@"disconnect_done", @"ok=1 already=1");
       return YES;
     }
     BOOL confirmed = [self waitUntilDisconnectedLockedWithTimeoutSec:8.0];
     self.isDisconnecting = NO;
     if (!confirmed) {
+      TssRfidBtLog(@"disconnect_done", @"ok=0 code=42 incomplete");
       if (outError) {
         *outError = [NSError errorWithDomain:@"TssRfidSdkSession" code:42
                                     userInfo:@{NSLocalizedDescriptionKey: @"切断の完了を確認できませんでした。"}];
       }
       return NO;
     }
+    TssRfidBtLog(@"disconnect_done", @"ok=1 confirmed=1");
     return YES;
   } @finally {
     self.isDisconnecting = NO;
     [self.connectLock unlock];
+    TssRfidBtLog(@"disconnect_lock_release", @"");
   }
 }
 
@@ -662,8 +841,13 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
 }
 
 - (void)onConnected {
+  TssRfidBtLog(@"onConnected",
+               [NSString stringWithFormat:@"activeGen=%ld pendingConnectSem=%d",
+                                          (long)self.activeConnectGeneration,
+                                          self.pendingConnectSem != nil ? 1 : 0]);
   if (self.activeConnectGeneration < 0) {
     // タイムアウト後の遅延コールバック: 成功扱いしない
+    TssRfidBtLog(@"onConnected_ignored_stale", @"activeGen<0 after_timeout");
     return;
   }
   [self trySetBuzzerMute];
@@ -672,10 +856,18 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
   if (ver.length > 0) {
     [self emit:@{@"type": @"firmware", @"version": ver}];
   }
+  TssRfidBtLog(@"onConnected_before_finish",
+               [NSString stringWithFormat:@"fwLen=%lu pendingConnectSem=%d",
+                                          (unsigned long)(ver.length),
+                                          self.pendingConnectSem != nil ? 1 : 0]);
   [self finishConnectWithSuccess:YES generation:self.activeConnectGeneration error:nil];
 }
 
 - (void)onConnectFail {
+  TssRfidBtLog(@"onConnectFail",
+               [NSString stringWithFormat:@"activeGen=%ld pendingConnectSem=%d message=(none)",
+                                          (long)self.activeConnectGeneration,
+                                          self.pendingConnectSem != nil ? 1 : 0]);
   [self finishConnectWithSuccess:NO
                       generation:self.activeConnectGeneration
                            error:[NSError errorWithDomain:@"TssRfidSdkSession" code:30
@@ -689,6 +881,11 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
   NSString *msg = message.length > 0
                       ? message
                       : @"タグリーダーに接続できませんでした。もう一度お試しください。";
+  TssRfidBtLog(@"onConnectFail",
+               [NSString stringWithFormat:@"activeGen=%ld pendingConnectSem=%d message=%@",
+                                          (long)self.activeConnectGeneration,
+                                          self.pendingConnectSem != nil ? 1 : 0,
+                                          msg]);
   [self finishConnectWithSuccess:NO
                       generation:self.activeConnectGeneration
                            error:[NSError errorWithDomain:@"TssRfidSdkSession" code:31
@@ -696,24 +893,47 @@ static void TssRfidPerformOnMain(void (^block)(void)) {
 }
 
 - (void)onDisconnected {
+  TssRfidBtLog(@"onDisconnected",
+               [NSString stringWithFormat:@"activeGen=%ld pendingConnectSem=%d pendingDisconnectSem=%d message=(none)",
+                                          (long)self.activeConnectGeneration,
+                                          self.pendingConnectSem != nil ? 1 : 0,
+                                          self.pendingDisconnectSem != nil ? 1 : 0]);
   [self.epcLastNotifiedAtMs removeAllObjects];
   [self finishDisconnectWait];
   [self emit:@{@"type": @"disconnected"}];
 }
 
 - (void)onDisconnected:(NSString *)message {
-  (void)message;
-  [self onDisconnected];
+  TssRfidBtLog(@"onDisconnected",
+               [NSString stringWithFormat:@"activeGen=%ld pendingConnectSem=%d pendingDisconnectSem=%d message=%@",
+                                          (long)self.activeConnectGeneration,
+                                          self.pendingConnectSem != nil ? 1 : 0,
+                                          self.pendingDisconnectSem != nil ? 1 : 0,
+                                          message ?: @""]);
+  [self.epcLastNotifiedAtMs removeAllObjects];
+  [self finishDisconnectWait];
+  [self emit:@{@"type": @"disconnected"}];
 }
 
 - (void)onLinkLost {
+  TssRfidBtLog(@"onLinkLost",
+               [NSString stringWithFormat:@"activeGen=%ld pendingConnectSem=%d pendingDisconnectSem=%d message=(none)",
+                                          (long)self.activeConnectGeneration,
+                                          self.pendingConnectSem != nil ? 1 : 0,
+                                          self.pendingDisconnectSem != nil ? 1 : 0]);
   [self finishDisconnectWait];
   [self emit:@{@"type": @"link_lost"}];
 }
 
 - (void)onLinkLost:(NSString *)message {
-  (void)message;
-  [self onLinkLost];
+  TssRfidBtLog(@"onLinkLost",
+               [NSString stringWithFormat:@"activeGen=%ld pendingConnectSem=%d pendingDisconnectSem=%d message=%@",
+                                          (long)self.activeConnectGeneration,
+                                          self.pendingConnectSem != nil ? 1 : 0,
+                                          self.pendingDisconnectSem != nil ? 1 : 0,
+                                          message ?: @""]);
+  [self finishDisconnectWait];
+  [self emit:@{@"type": @"link_lost"}];
 }
 
 - (void)onTriggerChanged:(BOOL)trigger {

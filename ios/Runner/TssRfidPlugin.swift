@@ -24,6 +24,10 @@ final class TssRfidPlugin: NSObject, FlutterStreamHandler {
   }
 
   private func emitEvent(_ map: [AnyHashable: Any]) {
+    // 診断ログは Flutter run コンソールへも出す（接続ロジック・UI は変更しない）
+    if let type = map["type"] as? String, type == "bt_diag", let line = map["line"] as? String {
+      print(line)
+    }
     DispatchQueue.main.async {
       self.eventSink?(map)
     }
@@ -155,20 +159,30 @@ final class TssRfidPlugin: NSObject, FlutterStreamHandler {
       return
     }
     // Known 保存は接続成功後のみ（失敗端末を一覧に残さない）
+    let addrTail = address.count <= 5 ? address : String(address.suffix(5))
+    NSLog("[ReaderBT-iOS] flutter_connect_start | name=%@ addrTail=…%@", name, addrTail)
     DispatchQueue.global(qos: .userInitiated).async {
       do {
         try TssRfidNativeBridge.connect(withName: name, address: address)
         TssRfidNativeBridge.rememberDeviceName(name, address: address)
         DispatchQueue.main.async {
+          NSLog("[ReaderBT-iOS] flutter_connect_result | ok=1")
           result(true)
         }
       } catch let e as NSError {
         DispatchQueue.main.async {
           let code = Self.flutterErrorCode(for: e)
+          NSLog(
+            "[ReaderBT-iOS] flutter_connect_result | ok=0 code=%@ nsCode=%ld msg=%@",
+            code,
+            e.code,
+            e.localizedDescription
+          )
           result(FlutterError(code: code, message: e.localizedDescription, details: nil))
         }
       } catch {
         DispatchQueue.main.async {
+          NSLog("[ReaderBT-iOS] flutter_connect_result | ok=0 code=connect_failed msg=%@", "\(error)")
           result(FlutterError(code: "connect_failed", message: "\(error)", details: nil))
         }
       }
