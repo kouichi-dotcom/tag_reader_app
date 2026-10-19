@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -22,6 +23,11 @@ class DeviceConnectionScreen extends StatefulWidget {
   const DeviceConnectionScreen({super.key, this.showBackButton = false});
 
   final bool showBackButton;
+
+  /// 単体テスト用。Android / iOS およびリリースビルドでは使わない。
+  /// 切断ボタンから `disconnect()` 完了を保留できるようにする。
+  @visibleForTesting
+  static Future<bool> Function()? debugDisconnectOverride;
 
   @override
   State<DeviceConnectionScreen> createState() => _DeviceConnectionScreenState();
@@ -62,6 +68,8 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
           break;
         case 'disconnected':
         case 'link_lost':
+          // 手動切断の完了は disconnect() の戻りで決める。通知だけでは解除しない。
+          if (_session.awaitsManualDisconnectResult) break;
           final linkLost = e['type'] == 'link_lost';
           setState(() {
             _connectedDevice = null;
@@ -86,8 +94,13 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
 
   void _onSessionChanged() {
     if (!mounted) return;
+    if (_isDisconnecting ||
+        _session.awaitsManualDisconnectResult ||
+        _session.phase == ReaderConnectionPhase.disconnecting) {
+      return;
+    }
     // Storage ではなくセッション／SDK 実状態を優先して表示を合わせる
-    if (!_session.isConnected && _connectedDevice != null && !_isDisconnecting) {
+    if (!_session.isConnected && _connectedDevice != null) {
       setState(() {
         _connectedDevice = null;
         _firmwareVersion = null;
@@ -292,6 +305,12 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
 
   bool get _buttonsLocked => _isConnecting || _isDisconnecting || _session.isBusy;
 
+  /// 切断の再試行は、処理中と接続処理中だけ止める。判定不能で busy のときは再度切断できる。
+  bool get _disconnectLocked =>
+      _isDisconnecting ||
+      _isConnecting ||
+      _session.phase == ReaderConnectionPhase.connecting;
+
   Future<void> _connect(MockBleDevice device) async {
     if (!_reader.supportsNativeRfid) {
       setState(() => _connectedDevice = device);
@@ -476,8 +495,57 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
     }
   }
 
+  /// 切断中表示を描いてからネイティブ切断へ進む。フレームが来ないときは待たずに進む。
+  Future<void> _waitUntilDisconnectUiPainted() async {
+    if (!mounted) return;
+    try {
+      await SchedulerBinding.instance.endOfFrame.timeout(
+        const Duration(milliseconds: 300),
+      );
+    } on TimeoutException {
+      // 画面破棄やバックグラウンドでフレームが来なくても、開始済みの切断は続ける。
+    }
+  }
+
+  /// true: まだ接続中 / false: 未接続 / null: 判定できない。
+  Future<bool?> _readStillConnected() async {
+    if (!_reader.supportsNativeRfid) return false;
+    try {
+      return await _reader.isConnected();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _finishFailedDisconnect(Object error) async {
+    final still = await _readStillConnected();
+    if (still == false) {
+      await ConnectedDeviceStorage.clear();
+      _session.markDisconnected();
+    } else if (still == true) {
+      _session.markDisconnectKeptConnected();
+    } else {
+      _session.markDisconnectUncertain();
+    }
+    if (!mounted) return;
+    setState(() {
+      _isDisconnecting = false;
+      if (still == false) {
+        _connectedDevice = null;
+        _firmwareVersion = null;
+      }
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(connectFailureMessageForUser(error)),
+        duration: const Duration(seconds: 8),
+      ),
+    );
+  }
+
   Future<void> _disconnect() async {
-    if (_buttonsLocked && !_isDisconnecting) {
+    if (_isDisconnecting) return;
+    if (_isConnecting || _session.phase == ReaderConnectionPhase.connecting) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -489,10 +557,13 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
       }
       return;
     }
-    if (_isDisconnecting) return;
 
-    setState(() => _isDisconnecting = true);
-    _session.markDisconnecting();
+    if (mounted) {
+      setState(() => _isDisconnecting = true);
+    }
+    _session.markDisconnecting(manual: true);
+    await _waitUntilDisconnectUiPainted();
+
     final sw = Stopwatch()..start();
     final hint = ReaderConnectionLog.deviceHintFrom(
       name: _connectedDevice?.name,
@@ -506,6 +577,17 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
           await _reader.stopInventory();
         } catch (_) {}
         await _reader.disconnect();
+      } else {
+        final override = DeviceConnectionScreen.debugDisconnectOverride;
+        if (!kReleaseMode && override != null) {
+          final ok = await override();
+          if (!ok) {
+            throw PlatformException(
+              code: 'disconnect_incomplete',
+              message: 'Disconnect completion was not confirmed.',
+            );
+          }
+        }
       }
       ReaderConnectionLog.write(
         action: 'disconnect_done',
@@ -531,35 +613,16 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
         deviceHint: hint,
         elapsedMs: sw.elapsedMilliseconds,
       );
-      // 完了未確認時は「切断完了」と断定しない
-      final still = _reader.supportsNativeRfid && await _reader.isConnected();
-      if (!still) {
-        await ConnectedDeviceStorage.clear();
-        _session.markDisconnected();
-      } else {
-        _session.markDisconnectUncertain();
-      }
-      if (!mounted) return;
-      setState(() {
-        _isDisconnecting = false;
-        if (!still) {
-          _connectedDevice = null;
-          _firmwareVersion = null;
-        }
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(connectFailureMessageForUser(e)),
-          duration: const Duration(seconds: 8),
-        ),
-      );
+      await _finishFailedDisconnect(e);
     } catch (e) {
-      if (mounted) {
-        setState(() => _isDisconnecting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(connectFailureMessageForUser(e))),
-        );
-      }
+      ReaderConnectionLog.write(
+        action: 'disconnect_done',
+        result: 'error',
+        detail: e.toString(),
+        deviceHint: hint,
+        elapsedMs: sw.elapsedMilliseconds,
+      );
+      await _finishFailedDisconnect(e);
     }
   }
 
@@ -647,6 +710,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
       key: ValueKey<String>('bonded_${device.id}'),
       direction: DismissDirection.endToStart,
       confirmDismiss: (direction) async {
+        if (_buttonsLocked) return false;
         if (!await _confirmRemoveBondedDevice(device)) return false;
         await _removeBondedDevice(device);
         return true;
@@ -699,7 +763,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
         subtitle: Text(device.id, style: const TextStyle(fontSize: 12)),
         trailing: isConnected
             ? TextButton(
-                onPressed: _buttonsLocked && !_isDisconnecting
+                onPressed: _disconnectLocked
                     ? null
                     : () {
                         _disconnect();
@@ -768,10 +832,10 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
                 ),
                 Container(
                   padding: const EdgeInsets.all(16),
-                  color: _connectedDevice != null
-                      ? AppDesign.linkedBackground
-                      : _isConnecting || _isDisconnecting
-                          ? const Color(0xFFE8F4FD)
+                  color: _isConnecting || _isDisconnecting
+                      ? const Color(0xFFE8F4FD)
+                      : _connectedDevice != null
+                          ? AppDesign.linkedBackground
                           : const Color(0xFFF0F0F0),
                   child: Row(
                     children: [
@@ -800,7 +864,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
                       ),
                       if (_connectedDevice != null && !_isConnecting)
                         TextButton(
-                          onPressed: _buttonsLocked && !_isDisconnecting
+                          onPressed: _disconnectLocked
                               ? null
                               : () {
                                   _disconnect();

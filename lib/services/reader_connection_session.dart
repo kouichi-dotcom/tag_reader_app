@@ -33,10 +33,15 @@ class ReaderConnectionSession extends ChangeNotifier {
   String? _deviceAddress;
   String? _lastErrorCode;
 
+  /// 手動切断の `disconnect()` が戻るまで、SDK の切断通知では完了にしない。
+  /// 別リーダー切り替えの事前切断では true にしない。
+  bool _awaitingManualDisconnectResult = false;
+
   ReaderConnectionPhase get phase => _phase;
   String? get deviceName => _deviceName;
   String? get deviceAddress => _deviceAddress;
   String? get lastErrorCode => _lastErrorCode;
+  bool get awaitsManualDisconnectResult => _awaitingManualDisconnectResult;
 
   bool get isConnected => _phase == ReaderConnectionPhase.connected;
   bool get isBusy =>
@@ -52,6 +57,7 @@ class ReaderConnectionSession extends ChangeNotifier {
   }
 
   Future<void> _syncFromNative() async {
+    if (_awaitingManualDisconnectResult) return;
     try {
       final connected = await _reader.isConnected();
       final name = await ConnectedDeviceStorage.getName();
@@ -94,17 +100,33 @@ class ReaderConnectionSession extends ChangeNotifier {
         }
         break;
       case 'disconnected':
-        _handleUnexpectedOrExplicitDisconnect(linkLost: false);
+        _onLinkEnded(linkLost: false);
         break;
       case 'link_lost':
-        _handleUnexpectedOrExplicitDisconnect(linkLost: true);
+        _onLinkEnded(linkLost: true);
         break;
       default:
         break;
     }
   }
 
+  void _onLinkEnded({required bool linkLost}) {
+    if (_awaitingManualDisconnectResult) {
+      ReaderConnectionLog.write(
+        action: linkLost ? 'link_lost' : 'disconnected_event',
+        result: 'deferred_manual_disconnect',
+        deviceHint: ReaderConnectionLog.deviceHintFrom(
+          name: _deviceName,
+          address: _deviceAddress,
+        ),
+      );
+      return;
+    }
+    _handleUnexpectedOrExplicitDisconnect(linkLost: linkLost);
+  }
+
   void _handleUnexpectedOrExplicitDisconnect({required bool linkLost}) {
+    _awaitingManualDisconnectResult = false;
     final wasConnected = _phase == ReaderConnectionPhase.connected ||
         _phase == ReaderConnectionPhase.disconnecting;
     ReaderConnectionLog.write(
@@ -125,6 +147,7 @@ class ReaderConnectionSession extends ChangeNotifier {
   }
 
   void markConnecting({String? name, String? address}) {
+    _awaitingManualDisconnectResult = false;
     _phase = ReaderConnectionPhase.connecting;
     _lastErrorCode = null;
     _deviceName = name;
@@ -133,6 +156,7 @@ class ReaderConnectionSession extends ChangeNotifier {
   }
 
   void markConnected({required String name, required String address}) {
+    _awaitingManualDisconnectResult = false;
     _phase = ReaderConnectionPhase.connected;
     _deviceName = name;
     _deviceAddress = address;
@@ -141,6 +165,7 @@ class ReaderConnectionSession extends ChangeNotifier {
   }
 
   void markConnectFailed({String? errorCode}) {
+    _awaitingManualDisconnectResult = false;
     _phase = ReaderConnectionPhase.connectFailed;
     _lastErrorCode = errorCode;
     _deviceName = null;
@@ -148,12 +173,16 @@ class ReaderConnectionSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  void markDisconnecting() {
+  /// [manual] が true のときだけ、SDK の切断通知を完了扱いにしない。
+  /// 別リーダーへの切り替え前切断は false（既定）のままにする。
+  void markDisconnecting({bool manual = false}) {
     _phase = ReaderConnectionPhase.disconnecting;
+    _awaitingManualDisconnectResult = manual;
     notifyListeners();
   }
 
   void markDisconnected() {
+    _awaitingManualDisconnectResult = false;
     _phase = ReaderConnectionPhase.disconnected;
     _deviceName = null;
     _deviceAddress = null;
@@ -161,11 +190,37 @@ class ReaderConnectionSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 切断完了を確認できなかったとき（未接続断定しない）。
-  void markDisconnectUncertain() {
+  /// 切断要求後も SDK が接続中と返したとき。接続表示のまま再切断できる。
+  void markDisconnectKeptConnected() {
+    _awaitingManualDisconnectResult = false;
     _lastErrorCode = 'disconnect_incomplete';
-    // 実状態は SDK に依存するため、isConnected を再確認するよう呼び出し側に委ねる。
+    _phase = ReaderConnectionPhase.connected;
     notifyListeners();
+  }
+
+  /// 接続中か未接続か判定できないとき。未接続にはせず、接続操作は busy のまま止める。
+  void markDisconnectUncertain() {
+    _awaitingManualDisconnectResult = false;
+    _lastErrorCode = 'disconnect_incomplete';
+    if (_phase != ReaderConnectionPhase.disconnecting) {
+      _phase = ReaderConnectionPhase.disconnecting;
+    }
+    notifyListeners();
+  }
+
+  @visibleForTesting
+  void debugReset() {
+    _awaitingManualDisconnectResult = false;
+    _phase = ReaderConnectionPhase.disconnected;
+    _deviceName = null;
+    _deviceAddress = null;
+    _lastErrorCode = null;
+    notifyListeners();
+  }
+
+  @visibleForTesting
+  void debugDispatchEvent(Map<String, dynamic> event) {
+    _onEvent(event);
   }
 
   Future<void> refreshFromNative() => _syncFromNative();
