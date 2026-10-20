@@ -6,6 +6,21 @@ Cursorで実施した開発内容を記録する。
 
 ## 作業記録
 
+### 2026-10-20 — iPhone 切断中UIをSDK切断の前に表示する
+
+- **目的**: 切断中 Widget は build されるが、TSS SDK の `disconnect` がメインスレッドを約3秒占有し、画面に出ない
+- **変更**: 手動切断で、既存の `endOfFrame` のあと iOS だけ次の1フレームを待つ。上限は 50ms。来なければ打ち切って切断は続ける
+- **対象外**: Android の追加待ち、セッション、ネイティブ SDK、接続処理、8秒タイムアウト
+- **ログ**: `disconnect_ui_present_wait` の start / ok / timeout / unmounted
+- **未実施**: ビルド、テスト、実機確認
+
+### 2026-10-20 — iPhone 切断中UIの時刻診断ログ
+
+- **目的**: 切断から未接続まで 3〜4 秒あるのに「切断中…」が出ない原因を、時刻で分ける
+- **追加**: `device_connection_screen.dart` に `[ReaderBT]` の診断行のみ。切断処理・表示・待機時間は変えていない
+- **記録**: フラグ設定、`endOfFrame` の ok / timeout、`stopInventory` と `disconnect()` の開始・終了、切断中の最初の `build`
+- **未実施**: ビルド、テスト、実機でのログ取得
+
 ### 2026-10-19 — Android 切断中ローディング（Dart）
 
 - **目的**: 切断ボタン直後に接続中と同じローディングを出し、`disconnect()` 完了まで連続操作を止める

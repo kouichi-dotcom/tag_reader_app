@@ -41,6 +41,8 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
   bool _isScanning = false;
   bool _isConnecting = false;
   bool _isDisconnecting = false;
+  /// 切断中表示の最初の build だけ記録する。毎フレームは出さない。
+  bool _disconnectUiBuildLogged = false;
   MockBleDevice? _connectingDevice;
   String? _firmwareVersion;
 
@@ -71,6 +73,7 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
           // 手動切断の完了は disconnect() の戻りで決める。通知だけでは解除しない。
           if (_session.awaitsManualDisconnectResult) break;
           final linkLost = e['type'] == 'link_lost';
+          final wasDisconnecting = _isDisconnecting;
           setState(() {
             _connectedDevice = null;
             _firmwareVersion = null;
@@ -78,6 +81,13 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
             _isDisconnecting = false;
             _connectingDevice = null;
           });
+          if (wasDisconnecting) {
+            ReaderConnectionLog.write(
+              action: 'disconnect_ui_flag',
+              result: 'clear_by_event',
+              detail: e['type'] as String?,
+            );
+          }
           if (linkLost && mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text(linkLostMessageForUser())),
@@ -497,13 +507,62 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
 
   /// 切断中表示を描いてからネイティブ切断へ進む。フレームが来ないときは待たずに進む。
   Future<void> _waitUntilDisconnectUiPainted() async {
-    if (!mounted) return;
+    if (!mounted) {
+      ReaderConnectionLog.write(
+        action: 'disconnect_ui_frame',
+        result: 'unmounted',
+      );
+      return;
+    }
+    final sw = Stopwatch()..start();
     try {
       await SchedulerBinding.instance.endOfFrame.timeout(
         const Duration(milliseconds: 300),
       );
+      ReaderConnectionLog.write(
+        action: 'disconnect_ui_frame',
+        result: 'ok',
+        elapsedMs: sw.elapsedMilliseconds,
+      );
     } on TimeoutException {
       // 画面破棄やバックグラウンドでフレームが来なくても、開始済みの切断は続ける。
+      ReaderConnectionLog.write(
+        action: 'disconnect_ui_frame',
+        result: 'timeout',
+        elapsedMs: sw.elapsedMilliseconds,
+      );
+    }
+  }
+
+  /// iOS の SDK `disconnect` はメインスレッドを占有する。
+  /// 先に次のフレームまで返し、組んだ切断中画面を表示する機会を渡す。
+  /// フレームが来ないときは短時間で打ち切り、切断は続ける。
+  Future<void> _waitForIosDisconnectPresentation() async {
+    if (defaultTargetPlatform != TargetPlatform.iOS) return;
+    if (!mounted) {
+      ReaderConnectionLog.write(
+        action: 'disconnect_ui_present_wait',
+        result: 'unmounted',
+      );
+      return;
+    }
+    final sw = Stopwatch()..start();
+    ReaderConnectionLog.write(action: 'disconnect_ui_present_wait', result: 'start');
+    try {
+      await SchedulerBinding.instance.endOfFrame.timeout(
+        const Duration(milliseconds: 50),
+      );
+      ReaderConnectionLog.write(
+        action: 'disconnect_ui_present_wait',
+        result: 'ok',
+        elapsedMs: sw.elapsedMilliseconds,
+      );
+    } on TimeoutException {
+      ReaderConnectionLog.write(
+        action: 'disconnect_ui_present_wait',
+        result: 'timeout',
+        elapsedMs: sw.elapsedMilliseconds,
+      );
     }
   }
 
@@ -527,7 +586,17 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
     } else {
       _session.markDisconnectUncertain();
     }
-    if (!mounted) return;
+    if (!mounted) {
+      ReaderConnectionLog.write(
+        action: 'disconnect_ui_flag',
+        result: 'unmounted_before_clear',
+      );
+      return;
+    }
+    ReaderConnectionLog.write(
+      action: 'disconnect_ui_flag',
+      result: 'clear_after_failure',
+    );
     setState(() {
       _isDisconnecting = false;
       if (still == false) {
@@ -558,11 +627,22 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
       return;
     }
 
+    _disconnectUiBuildLogged = false;
     if (mounted) {
       setState(() => _isDisconnecting = true);
+      ReaderConnectionLog.write(
+        action: 'disconnect_ui_flag',
+        result: 'set',
+      );
+    } else {
+      ReaderConnectionLog.write(
+        action: 'disconnect_ui_flag',
+        result: 'unmounted_before_set',
+      );
     }
     _session.markDisconnecting(manual: true);
     await _waitUntilDisconnectUiPainted();
+    await _waitForIosDisconnectPresentation();
 
     final sw = Stopwatch()..start();
     final hint = ReaderConnectionLog.deviceHintFrom(
@@ -573,10 +653,41 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
 
     try {
       if (_reader.supportsNativeRfid) {
+        final swStop = Stopwatch()..start();
+        ReaderConnectionLog.write(action: 'stop_inventory_start');
         try {
           await _reader.stopInventory();
-        } catch (_) {}
-        await _reader.disconnect();
+          ReaderConnectionLog.write(
+            action: 'stop_inventory_done',
+            result: 'ok',
+            elapsedMs: swStop.elapsedMilliseconds,
+          );
+        } catch (e) {
+          ReaderConnectionLog.write(
+            action: 'stop_inventory_done',
+            result: 'error',
+            detail: e.toString(),
+            elapsedMs: swStop.elapsedMilliseconds,
+          );
+        }
+        final swDisc = Stopwatch()..start();
+        ReaderConnectionLog.write(action: 'disconnect_call_start');
+        try {
+          await _reader.disconnect();
+          ReaderConnectionLog.write(
+            action: 'disconnect_call_done',
+            result: 'ok',
+            elapsedMs: swDisc.elapsedMilliseconds,
+          );
+        } catch (e) {
+          ReaderConnectionLog.write(
+            action: 'disconnect_call_done',
+            result: 'error',
+            detail: e.toString(),
+            elapsedMs: swDisc.elapsedMilliseconds,
+          );
+          rethrow;
+        }
       } else {
         final override = DeviceConnectionScreen.debugDisconnectOverride;
         if (!kReleaseMode && override != null) {
@@ -596,11 +707,20 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
         elapsedMs: sw.elapsedMilliseconds,
       );
       if (mounted) {
+        ReaderConnectionLog.write(
+          action: 'disconnect_ui_flag',
+          result: 'clear_after_disconnect',
+        );
         setState(() {
           _connectedDevice = null;
           _firmwareVersion = null;
           _isDisconnecting = false;
         });
+      } else {
+        ReaderConnectionLog.write(
+          action: 'disconnect_ui_flag',
+          result: 'unmounted_before_clear',
+        );
       }
       await ConnectedDeviceStorage.clear();
       _session.markDisconnected();
@@ -815,6 +935,13 @@ class _DeviceConnectionScreenState extends State<DeviceConnectionScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (_isDisconnecting && !_disconnectUiBuildLogged) {
+      _disconnectUiBuildLogged = true;
+      ReaderConnectionLog.write(
+        action: 'disconnect_ui_build',
+        result: 'first',
+      );
+    }
     return Scaffold(
       backgroundColor: AppDesign.scaffoldBackground,
       body: Center(
