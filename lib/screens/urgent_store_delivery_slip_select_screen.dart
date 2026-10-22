@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
 import '../config/api_config.dart';
+import '../config/feature_flags.dart';
 import '../models/reception_detail_item.dart';
 import '../models/reception_slip.dart';
 import '../models/slip_list_filter.dart';
 import '../models/urgent_store_delivery.dart';
 import '../theme/app_design.dart';
 import '../widgets/main_flow_nav_bar.dart';
+import 'urgent_store_delivery_blocked_page.dart';
 import 'urgent_store_delivery_slip_detail_screen.dart';
 
 /// 急ぎ来店納品 伝票選択（来店(納品)・期日今日・未確認）
@@ -101,6 +103,9 @@ class _UrgentStoreDeliverySlipSelectScreenState
 
   @override
   Widget build(BuildContext context) {
+    if (!enableUrgentStoreDelivery) {
+      return const UrgentStoreDeliveryBlockedPage();
+    }
     return Scaffold(
       backgroundColor: AppDesign.scaffoldBackground,
       body: Center(

@@ -1,0 +1,9 @@
+#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.profile-staging.xcconfig"
+#include "Generated.xcconfig"
+
+// staging Scheme は常にテスト API。xcconfig は後の代入が優先されるため、
+// flutter が Generated.xcconfig に書いた DART_DEFINES よりこちらを使う。
+// 値は FLAVOR=staging と APP_ENV=test の Base64（Flutter の encodeDartDefines と同じ）。
+DART_DEFINES=RkxBVk9SPXN0YWdpbmc=,QVBQX0VOVj10ZXN0
+FLAVOR=staging
+APP_DISPLAY_NAME=タグリーダー DEV

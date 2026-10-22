@@ -1,21 +1,23 @@
 # 現在のタスク
 
-Bluetooth 接続安定化・エラー表示改善（R-5000 / Android・iOS）。
+v0.9.0 Beta 配布準備。
 
-# 目的
+# 状態
 
-接続・切断の完了確認と競合防止を強化し、複数スマホでの共有を円滑にする。
-自動接続は追加しない。
+- iOS の staging / prod 環境分離は実装済み。基本の実機確認は完了
+- バージョン設定済み。Git の Commit と Push は、在庫確認の戻る操作とあわせて `main` へ反映する
+- App Store Connect への登録と TestFlight 配布は未実施。Git タグ `v0.9.0-beta.1` は未作成
+- staging の送信制限問題は今回の対象外
 
-# 完了条件
+# リリース候補
 
-- Android: 接続タイムアウト・切断完了待ち・処理直列化
-- iOS: 切断完了待ち・Known 成功後保存・BT OFF 検出・遅延コールバック無視
-- 画面遷移後も接続維持（dispose で切断しない）
-- エラー文言の改善と診断ログ
-- 自動テスト（エラー文言）・静的解析
-- 実機手順書作成（実機試験自体は別途）
+- 名称: v0.9.0 Beta（アプリ画面には Beta と出さない）
+- Version: `0.9.0`
+- Build Number: `1` を候補とする。App Store Connect での使用有無は未確認のため、使用可能とは断定しない
+- 将来の Git タグ: `v0.9.0-beta.1`（未作成）
+- 配布: TestFlight。対象は prod（本番 API / 本番 DB）
+- 急ぎ来店納品: prod では非表示。staging では表示
 
 # 作業終了後
 
-DEVELOPMENT_LOG.md へ作業結果を記録する。Git コミットは承認後。
+DEVELOPMENT_LOG.md へ作業結果を記録する。Git タグの作成は、配布 Commit を確定したあとの明示指示まで行わない。

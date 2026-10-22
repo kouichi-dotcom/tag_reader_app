@@ -335,6 +335,30 @@ Git 操作でエラーが出ても、危険な操作で無理に解決しない�
 
 ---
 
+# 16.6. バージョン管理（配布）
+
+配布バージョンの基準は、Flutter の `pubspec.yaml` の `version` とする。
+形式は `バージョン+Build Number`（例: `0.9.0+1`）。
+iOS と Android は、各プラットフォームへ番号を直接書かず、この値に連動させる。
+
+Git タグは、配布対象の Commit を確定したあとに付ける。作成と Push は、ユーザーが明示したときのみ行う。
+
+| 種類 | タグ形式の例 |
+|------|----------------|
+| Beta | `v0.9.0-beta.1` |
+| 正式版 | `v1.0.0` |
+
+* Beta は開発管理上の名称である。アプリ画面へ Beta 表記を足すためのタグではない
+* 同じ Git タグを異なる Commit へ付け替えない
+* Build Number はアップロードごとに重複しないよう管理する。使用済みと判明した番号は再利用しない
+* 配布ビルドと Git Commit を対応付けて `DEVELOPMENT_LOG.md` に記録する（Version、Build Number、Bundle ID、Commit、タグ）
+* staging と prod は Bundle ID と API 接続先を混同しない
+  * staging: `jp.co.ohmiyakouki.tagreader.staging` / staging API
+  * prod: `jp.co.ohmiyakouki.tagreader` / prod API
+* 既存の基準タグ `prod-readonly`（16.5）の意味は変えない
+
+---
+
 # 17. 作業完了時の確認
 
 1. `CURRENT_TASK.md` の内容を実装した

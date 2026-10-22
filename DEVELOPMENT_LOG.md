@@ -6,6 +6,79 @@ Cursorで実施した開発内容を記録する。
 
 ## 作業記録
 
+### 2026-10-22 — 在庫確認の戻る操作をカテゴリー一覧へ
+
+- **目的**: カテゴリーを開いたあと、画面端スワイプや戻るでホームまで戻ってしまうのをやめ、カテゴリー一覧へ戻す
+- **原因**: カテゴリー選択は同じ画面の表示切替だけで、端末の戻るは在庫確認の画面ごと閉じていた
+- **変更**: カテゴリー・全表示・検索結果を別画面 `inventory_category_products_screen` で開く。戻る操作はこの画面だけを閉じる。カテゴリー一覧でもう一度戻るとホーム
+- **維持**: 商品を開いたあとの戻るは商品一覧。在庫の取得 API は変更していない
+- **未実施**: 実機でのスワイプ確認
+
+### 2026-10-22 — v0.9.0 Beta のバージョン設定と開発管理（STEP 6）
+
+- **目的**: 社員向け初回 TestFlight 候補の Version / Build Number を `0.9.0+1` に揃え、リリース計画と Git の版管理ルールを残す
+- **変更前**: `pubspec.yaml` は `1.0.0+1`。アプリの `Info.plist` は `$(FLUTTER_BUILD_NAME)` / `$(FLUTTER_BUILD_NUMBER)`。アプリ本体の各構成は `CURRENT_PROJECT_VERSION = $(FLUTTER_BUILD_NUMBER)` で、`MARKETING_VERSION` は無い
+- **変更**: `pubspec.yaml` のみ `version: 0.9.0+1`。`Info.plist` へ番号は書いていない。表示名とアイコン、Feature Flag、Bundle ID、Team ID は未変更
+- **連動**: ビルド時の `Generated.xcconfig` が `FLUTTER_BUILD_NAME=0.9.0` / `FLUTTER_BUILD_NUMBER=1`。Android は `versionName = flutter.versionName` / `versionCode = flutter.versionCode` のため同じ番号に連動する。Android 固有のファイルは変えていない
+- **対象外の番号**: RunnerTests は `MARKETING_VERSION = 1.0` / `CURRENT_PROJECT_VERSION = 1`（テスト用）。`AppFrameworkInfo.plist` は Flutter フレームワーク側の `1.0`。いずれも配布アプリの Version ではないため未変更
+- **Git**: 既存タグは `prod-readonly` のみ。`v0.9.0-beta.1` は未作成。HEAD は `a4df237`（未コミット変更あり）
+- **App Store Connect**: ローカルに Archive、ipa、アップロードログは無く、アップロード履歴は未確認。Build Number `1` が使用可能とは断定していない
+- **検証**: `flutter pub get` 成功。`flutter test` は 39 件成功（iOS prod で急ぎ来店納品を出さないテストを含む）。`flutter analyze` は既存の info 10 件と warning 2 件のみで、今回の新規指摘は無い
+- **iOS prod**: 署名なし Release は成功。成果物は Version `0.9.0`、Build `1`、Bundle ID `jp.co.ohmiyakouki.tagreader`、表示名 `Tag Reader App`。`DART_DEFINES` は `FLAVOR=prod` / `APP_ENV=prod`
+- **staging（静的）**: Release-staging の Version / Build は prod と同じ `0.9.0` / `1`。Bundle ID は `jp.co.ohmiyakouki.tagreader.staging`。`DART_DEFINES` は `FLAVOR=staging` / `APP_ENV=test`。表示名は「タグリーダー DEV」
+- **Git**: 在庫確認の戻る操作とあわせ、この記録を含む Commit で `main` へ反映する。タグ `v0.9.0-beta.1` は未作成
+- **未実施**: 実機インストール、署名済み Archive、TestFlight、App Store Connect の変更
+
+### 2026-10-21 — iOS prod の Bundle ID を会社登録済み ID に変更（STEP 5-D）
+
+- **目的**: prod の Bundle ID を `jp.co.ohmiyakouki.tagreader` に合わせる
+- **変更**: `project.pbxproj` の Debug-prod / Profile-prod / Release-prod の3構成だけ
+- **維持**: staging は `jp.co.ohmiyakouki.tagreader.staging`。Team は `3MMGLB2435`。prod の `DART_DEFINES` は `FLAVOR=prod` / `APP_ENV=prod`
+- **Runner**: 今回は未変更。Bundle ID は `jp.co.ohmiyakouki.tagreader.staging`（旧 `com.ohmiyakouki.tagReaderApp` ではない）。Flavor は固定していない
+- **検証**: 署名なし prod Release は成功。成果物の Bundle ID は新 ID、表示名は Tag Reader App、`DART_DEFINES` は prod。急ぎ来店納品の既存テスト6件は成功
+- **未実施**: 実機インストール、Provisioning Profile 作成、Commit / Push
+
+### 2026-10-20 — iOS staging の Bundle ID を会社登録済み ID に変更（STEP 5-C）
+
+- **目的**: staging の Bundle ID を Apple Developer 登録済みの `jp.co.ohmiyakouki.tagreader.staging` に合わせる
+- **変更**: `project.pbxproj` の Debug-staging / Profile-staging / Release-staging の3構成だけ
+- **維持**: prod と Runner は `com.ohmiyakouki.tagReaderApp`、Team は全構成 `3MMGLB2435`、`DART_DEFINES` は `FLAVOR=staging` / `APP_ENV=test`
+- **検証**: `xcodebuild -showBuildSettings` で3系統の Bundle ID と Team を確認。署名なしの staging Release ビルドは成功。成果物の Bundle ID は新 ID、表示名は「タグリーダー DEV」、`DART_DEFINES` は staging / test
+- **未実施**: 実機インストール、Provisioning Profile 作成、Commit / Push
+
+### 2026-10-20 — iOS 署名チームを会社用 Team ID に統一（STEP 5-B）
+
+- **目的**: Runner / staging / prod の署名チームを会社用 `3MMGLB2435`（OMIYA KOKI, Y.K.）に揃える
+- **変更**: `ios/Runner.xcodeproj/project.pbxproj` の `DEVELOPMENT_TEAM` 18箇所。Runner と RunnerTests の Debug / Profile / Release および staging・prod の各3構成
+- **維持**: Bundle ID、Automatic（RunnerTests は明示、本体は従来どおりプロファイル手動固定なし）、`DART_DEFINES`、Feature Flag、Android
+- **検証**: `xcodebuild -list` で Scheme `prod` / `Runner` / `staging` を確認。9構成×2ターゲットの `DEVELOPMENT_TEAM` は `3MMGLB2435`。アプリ用プロジェクト内に旧 Team ID は残っていない
+- **署名の手元資料**: 会社用 Apple Development 証明書はある。会社用 Provisioning Profile はローカルに無い。証明書と Profile は新規作成していない
+- **未実施**: 実機インストール、Portal 登録、Commit / Push
+
+### 2026-10-20 — iOS prod で急ぎ来店納品を非表示（STEP 4）
+
+- **目的**: iOS の prod だけ急ぎ来店納品を出さず、直接開くことも止める
+- **判定**: `enableUrgentStoreDelivery`。環境が不正なら不可。iOS かつ prod なら不可。それ以外の有効な環境（iOS staging、Android）は可
+- **画面**: ホームから外す。共通ルートと急ぎ来店納品の各画面は案内を出して作業画面を開かない
+- **維持**: 通常の納品・返却・交換、Android、API の環境切替、更新禁止フラグ
+- **検証**: フラグの単体テストと画面テストを含む `flutter test` は成功。`flutter analyze` は既存の info 10件と warning 2件のみ。署名なしの `staging` / `prod` Release ビルドは成功し、それぞれの `DART_DEFINES` は維持
+- **未実施**: 実機インストール、Commit / Push、STEP 3 の DB 照合
+
+### 2026-10-20 — iOS prod Flavor（STEP 1）
+
+- **目的**: iOS に prod Scheme と Debug-prod / Profile-prod / Release-prod を追加し、実行時の API を `FLAVOR=prod` / `APP_ENV=prod` に固定する
+- **維持**: Bundle ID `com.ohmiyakouki.tagReaderApp`、Team `G5335GZVS2`、既存 Debug / Profile / Release、Runner Scheme、prod API の判定、Android
+- **受け渡し**: prod 用 xcconfig が `Generated.xcconfig` のあとで `DART_DEFINES` を上書きする。Xcode の Run Script がこの値を Flutter の `--DartDefines` に渡す
+- **未実施**: 急ぎ来店納品の変更、実機インストール、Commit / Push
+
+### 2026-10-20 — iOS staging Flavor（STEP 2）
+
+- **目的**: 同じ iPhone に別アプリとして入る staging Scheme を追加する
+- **追加**: Debug-staging / Profile-staging / Release-staging、Scheme `staging`、Bundle ID `com.ohmiyakouki.tagReaderApp.staging`、表示名「タグリーダー DEV」
+- **環境**: `FLAVOR=staging` と `APP_ENV=test` を xcconfig の `DART_DEFINES` で固定。prod の定義は維持
+- **表示名**: `Info.plist` は `$(APP_DISPLAY_NAME)`。Runner は `Tag Reader App`、prod も同じ、staging だけ別名称
+- **対象外**: Android、業務機能、急ぎ来店納品、アイコン、実機インストール、Commit / Push
+
 ### 2026-10-20 — iPhone 切断中UIをSDK切断の前に表示する
 
 - **目的**: 切断中 Widget は build されるが、TSS SDK の `disconnect` がメインスレッドを約3秒占有し、画面に出ない

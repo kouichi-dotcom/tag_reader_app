@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../config/feature_flags.dart';
 import '../models/reception_detail_item.dart';
 import '../models/reception_slip.dart';
 import '../models/urgent_store_delivery.dart';
 import '../theme/app_design.dart';
 import '../widgets/main_flow_nav_bar.dart';
+import 'urgent_store_delivery_blocked_page.dart';
 import '../widgets/urgent_read_item_tile.dart';
 
 /// 急ぎ来店納品 過不足確認（伝票明細 × 読取商品）。
@@ -27,6 +29,9 @@ class UrgentStoreDeliveryConfirmScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!enableUrgentStoreDelivery) {
+      return const UrgentStoreDeliveryBlockedPage();
+    }
     final company = slip.listCustomerName.trim().isEmpty
         ? '--'
         : slip.listCustomerName;

@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Tag Reader App</string>
+	<string>$(APP_DISPLAY_NAME)</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -24,14 +24,14 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>タグリーダーとの接続・ICタグの読取のために Bluetooth を使用します。</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>タグリーダーとの接続・ICタグの読取のために Bluetooth を使用します。</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>ICタグ更新時に近くの保管場所（拠点）を判定するために位置情報を使用します。</string>
-	<key>LSRequiresIPhoneOS</key>
-	<true/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -1,0 +1,8 @@
+#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.release-prod.xcconfig"
+#include "Generated.xcconfig"
+
+// prod Scheme は常に本番 API。xcconfig は後の代入が優先されるため、
+// flutter が Generated.xcconfig に書いた DART_DEFINES よりこちらを使う。
+// 値は FLAVOR=prod と APP_ENV=prod の Base64（Flutter の encodeDartDefines と同じ）。
+DART_DEFINES=RkxBVk9SPXByb2Q=,QVBQX0VOVj1wcm9k
+FLAVOR=prod

@@ -20,7 +20,7 @@ ICタグリーダーで読み取った ICタグ情報を、社内 SQL Server 上
 |------|----------|
 | Android スマートフォン | RFID 実機利用の主戦場 |
 | Windows PC | 開発・UI / API 疎通の主戦場（RFID なしでも API テスト可） |
-| iPhone | コード・SDK ブリッジあり。Flavor 分離は未検証 |
+| iPhone | コード・SDK ブリッジあり。staging / prod の Flavor 分離は実装済み（TestFlight は未配布） |
 
 ---
 
@@ -430,7 +430,7 @@ GIT_WORKFLOW.md
 | 3 | タグ更新・伝票紐付け・DB 登録・二重送信防止 | **概ね完了** |
 | 4 | 業務向け改善（UI・操作数・エラー表示・検索改善） | **進行中**（CURRENT_TASK 参照） |
 | 5 | テスト（Android / Windows / iOS / 通信切断 / 異常系） | **部分的**（iOS・異常系は継続） |
-| 6 | 公開準備（本番 API/DB・社内利用・ストア準備） | **部分的**（staging/prod・更新禁止は実装済） |
+| 6 | 公開準備（本番 API/DB・社内利用・ストア準備） | **進行中**（v0.9.0 Beta の TestFlight 準備。配布は未実施） |
 
 詳細タスクは `CURRENT_TASK.md` で指示する。フェーズ表は全体俯瞰用。
 
@@ -479,7 +479,7 @@ GIT_WORKFLOW.md
 * エラー時に適切な案内が表示される
 * Android で利用できる
 * Windows で UI / API 疎通できる
-* iPhone で利用できる（目標。Flavor 等は未完了）
+* iPhone で利用できる（Flavor 分離は実装済み。TestFlight 配布は未実施）
 
 ---
 
@@ -494,6 +494,7 @@ GIT_WORKFLOW.md
 * 管理者機能
 * 商品位置情報
 * 棚卸専用フローの強化
+* 在庫を見る: 保管場所での絞り込み
 * EPC・商品コードからの新規タグ登録フロー
 * API 認証（JWT / API Key 等）
 
@@ -515,3 +516,40 @@ GIT_WORKFLOW.md
 6. コードが整理されている
 
 既存業務や既存システムへの影響を常に考慮して開発する。
+
+---
+
+# 29. リリース計画
+
+Beta は開発管理上の名称とする。アプリ画面には Beta 表記を追加しない。
+正式リリースの具体的な日程は未定。
+
+| 段階 | 内容 |
+|------|------|
+| v0.9.0 Beta | 社員向け初回 TestFlight 配布 |
+| v0.9.x Beta | 試験運用と不具合修正 |
+| v1.0.0 | 初回正式リリース（日程未定） |
+
+v0.9.0 Beta の配布対象は prod。
+
+| 項目 | 内容 |
+|------|------|
+| iOS Version | `0.9.0`（`pubspec.yaml` の `version` が基準） |
+| Build Number | 初回候補は `1`。App Store Connect での使用有無は未確認のため、使用可能とは断定しない |
+| 将来の Git タグ | `v0.9.0-beta.1`（配布 Commit 確定後。現時点では未作成） |
+| 配布方法 | TestFlight |
+| アプリ表示名 | `Tag Reader App` |
+| API / DB | prod API / 本番 DB |
+| 急ぎ来店納品 | 非表示 |
+| Team ID | `3MMGLB2435` |
+| Bundle ID | `jp.co.ohmiyakouki.tagreader` |
+
+staging は開発・検証用として維持する。
+
+| 項目 | staging | prod |
+|------|---------|------|
+| Bundle ID | `jp.co.ohmiyakouki.tagreader.staging` | `jp.co.ohmiyakouki.tagreader` |
+| API | staging API | prod API |
+| 急ぎ来店納品 | 表示 | 非表示 |
+| Team ID | `3MMGLB2435` | `3MMGLB2435` |
+| バージョン番号 | prod と共通（同一ソース） | staging と共通（同一ソース） |

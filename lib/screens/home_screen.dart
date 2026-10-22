@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
 import '../config/api_config.dart';
+import '../config/feature_flags.dart';
 import '../models/output_mode.dart';
 import '../services/connected_device_storage.dart';
 import '../services/reader_connection_session.dart';
@@ -421,13 +422,15 @@ class _HomeScreenState extends State<HomeScreen> {
             );
           },
         ),
-        const SizedBox(height: 8),
-        _buildUrgentDeliveryAction(
-          onTap: () async {
-            await Navigator.of(context).push(buildUrgentStoreDeliveryRoute());
-            if (mounted) setState(() {});
-          },
-        ),
+        if (enableUrgentStoreDelivery) ...[
+          const SizedBox(height: 8),
+          _buildUrgentDeliveryAction(
+            onTap: () async {
+              await Navigator.of(context).push(buildUrgentStoreDeliveryRoute());
+              if (mounted) setState(() {});
+            },
+          ),
+        ],
         const SizedBox(height: 8),
         _buildWorkAction(
           icon: Icons.inventory_2_outlined,

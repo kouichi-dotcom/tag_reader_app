@@ -14,11 +14,13 @@ import '../services/hardware_trigger_mode_storage.dart';
 import '../services/product_cache.dart';
 import '../services/tag_ledger_cache.dart';
 import '../services/tag_reader_service.dart';
+import '../config/feature_flags.dart';
 import '../services/urgent_store_delivery_session.dart';
 import '../theme/app_design.dart';
 import '../widgets/main_flow_nav_bar.dart';
 import '../widgets/reader_not_connected_dialog.dart';
 import '../widgets/urgent_read_item_tile.dart';
+import 'urgent_store_delivery_blocked_page.dart';
 import 'urgent_store_delivery_confirm_screen.dart';
 import 'urgent_store_delivery_slip_select_screen.dart';
 
@@ -367,6 +369,9 @@ class _UrgentStoreDeliveryScreenState extends State<UrgentStoreDeliveryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!enableUrgentStoreDelivery) {
+      return const UrgentStoreDeliveryBlockedPage();
+    }
     final items = _items;
     final hasItems = items.isNotEmpty;
     final selectedCount = _selectedCount;
@@ -533,7 +538,11 @@ class _UrgentStoreDeliveryScreenState extends State<UrgentStoreDeliveryScreen> {
 Route<void> buildUrgentStoreDeliveryRoute({bool showBackButton = true}) {
   return MaterialPageRoute<void>(
     settings: const RouteSettings(name: UrgentStoreDeliveryRoutes.main),
-    builder: (context) =>
-        UrgentStoreDeliveryScreen(showBackButton: showBackButton),
+    builder: (context) {
+      if (!enableUrgentStoreDelivery) {
+        return const UrgentStoreDeliveryBlockedPage();
+      }
+      return UrgentStoreDeliveryScreen(showBackButton: showBackButton);
+    },
   );
 }

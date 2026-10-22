@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../config/feature_flags.dart';
 import '../models/reception_detail_item.dart';
 import '../models/reception_slip.dart';
 import '../models/urgent_store_delivery.dart';
 import '../theme/app_design.dart';
 import '../widgets/main_flow_nav_bar.dart';
+import 'urgent_store_delivery_blocked_page.dart';
 import 'urgent_store_delivery_confirm_screen.dart';
 
 /// 急ぎ来店納品 伝票詳細（現場名・全商品）。戻る／確認へ進む。
@@ -42,6 +44,9 @@ class UrgentStoreDeliverySlipDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!enableUrgentStoreDelivery) {
+      return const UrgentStoreDeliveryBlockedPage();
+    }
     final deadline = slip.deadlineName?.trim().isNotEmpty == true
         ? slip.deadlineName!.trim()
         : '--';
