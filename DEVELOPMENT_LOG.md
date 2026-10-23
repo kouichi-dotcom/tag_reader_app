@@ -6,6 +6,19 @@ Cursorで実施した開発内容を記録する。
 
 ## 作業記録
 
+### 2026-10-23 — v0.9.0 TestFlight Build 2 の準備（STEP 11-B）
+
+- **目的**: Windows の最新コミットを Mac へ反映し、社員向け TestFlight の `v0.9.0` Build `2` を準備する
+- **取得**: Pull 前の HEAD は `f323782`。作業ツリーはクリーンで、以前の STEP 11-B 用ローカルコミットは無かった。`git pull --ff-only origin main` で `277c094` と `1717f72` を fast-forward した
+- **UI**: 既存仕様のまま確認した。下部5タブ（ホーム / ICタグ更新 / 伝票 / 在庫 / 履歴）。ホームは Bluetooth 接続状況と設定メニュー。急ぎ来店納品は有効な環境だけ伝票タブ。本体ボタンは ICタグ更新タブの表示中、伝票のタグ紐付け画面、急ぎ来店納品の読取画面だけ受け付ける。ICタグ読取・更新の右上「クリア」は確認後に一覧・選択・送信待ちを消し、読取中なら停止する。更新履歴はキャッシュ済み商品名を商品コードの横に表示する
+- **バージョン**: `pubspec.yaml` を `0.9.0+1` から `0.9.0+2` へ変更。表示名「Tag Reader App」は未変更
+- **環境**: 設定ファイルは変更していない。prod は Scheme `prod`、Bundle ID `jp.co.ohmiyakouki.tagreader`、Team `3MMGLB2435`、`FLAVOR=prod` / `APP_ENV=prod`、急ぎ来店納品は非表示。staging は Scheme `staging`、Bundle ID `jp.co.ohmiyakouki.tagreader.staging`、Team `3MMGLB2435`、`FLAVOR=staging` / `APP_ENV=test`、急ぎ来店納品は表示
+- **検証**: `flutter pub get` 成功。`flutter test` は 46 件成功（5タブ遷移、クリア、履歴の商品名、iOS prod で急ぎ来店納品を出さないテストを含む）。`flutter analyze` は既存の info 10 件と warning 2 件のみで、新規指摘は無い。`git diff --check` に空白エラーは無い
+- **iOS prod**: 署名なし Release は成功。成果物は Version `0.9.0`、Build `2`、Bundle ID `jp.co.ohmiyakouki.tagreader`、表示名 `Tag Reader App`。ビルド設定の `DART_DEFINES` は `FLAVOR=prod` / `APP_ENV=prod`。コード署名は無い
+- **staging（静的）**: Release-staging の Version / Build は `0.9.0` / `2`。Bundle ID は `jp.co.ohmiyakouki.tagreader.staging`。表示名は「タグリーダー DEV」。`DART_DEFINES` は `FLAVOR=staging` / `APP_ENV=test`
+- **配布**: TestFlight Build 1 は配布済み。Build 2 の Archive とアップロードは未実施。Git タグは未作成
+- **未実施**: RFIDリーダーの本体ボタンなど実機確認、署名済み Archive、TestFlight アップロード
+
 ### 2026-10-23 — クリアと履歴の商品名を main へ反映
 
 - **目的**: 動作確認済みのクリアボタンと、更新履歴の商品名表示を `main` へ反映する
