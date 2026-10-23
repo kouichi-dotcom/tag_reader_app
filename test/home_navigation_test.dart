@@ -107,6 +107,28 @@ void main() {
 
     await tester.tap(tabLabel('ICタグ更新'));
     await tester.pump();
+    expect(find.text('クリア'), findsOneWidget);
+
+    await tester.tap(find.text('クリア'));
+    await tester.pump();
+    expect(find.text('読取データをクリアしますか？'), findsOneWidget);
+
+    await tester.tap(find.text('キャンセル'));
+    await tester.pump();
+    expect(find.text('読取データをクリアしますか？'), findsNothing);
+    expect(find.text('ICタグ読取・更新'), findsOneWidget);
+
+    await tester.tap(find.text('クリア'));
+    await tester.pump();
+    await tester.tap(
+      find.descendant(of: find.byType(AlertDialog), matching: find.text('クリア')),
+    );
+    await tester.pump();
+    expect(find.text('読取データをクリアしますか？'), findsNothing);
+    expect(find.textContaining('読込件数: 0 件'), findsOneWidget);
+
+    await tester.tap(tabLabel('ICタグ更新'));
+    await tester.pump();
     expect(find.text('ICタグ読取・更新'), findsOneWidget);
     expect(
       tester

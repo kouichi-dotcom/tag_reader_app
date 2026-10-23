@@ -12,6 +12,7 @@ class MainFlowNavBar extends StatelessWidget {
     this.backLabel = '←',
     this.titleMaxLines = 1,
     this.titleStyle,
+    this.trailing,
   });
 
   final bool showBackButton;
@@ -24,8 +25,12 @@ class MainFlowNavBar extends StatelessWidget {
   final int titleMaxLines;
   final TextStyle? titleStyle;
 
+  /// 右端の操作（ICタグ更新のクリアなど）。無い画面では出さない。
+  final Widget? trailing;
+
   /// 戻るボタン表示時、タイトル左端の余白（ボタンと重ならない幅）
   static const double _titleLeftInsetWithBack = 48;
+  static const double _titleRightInsetWithTrailing = 72;
 
   static const TextStyle _defaultTitleStyle = TextStyle(
     fontSize: 17,
@@ -51,7 +56,7 @@ class MainFlowNavBar extends StatelessWidget {
             children: [
               Positioned.fill(
                 left: showBackButton ? _titleLeftInsetWithBack - 16 : 0,
-                right: 0,
+                right: trailing != null ? _titleRightInsetWithTrailing - 16 : 0,
                 child: Align(
                   alignment: Alignment.center,
                   child: Text(
@@ -63,6 +68,13 @@ class MainFlowNavBar extends StatelessWidget {
                   ),
                 ),
               ),
+              if (trailing != null)
+                Positioned(
+                  right: 0,
+                  top: 0,
+                  bottom: 0,
+                  child: Align(alignment: Alignment.centerRight, child: trailing),
+                ),
               if (showBackButton)
                 Positioned(
                   left: 0,

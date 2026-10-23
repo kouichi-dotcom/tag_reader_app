@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../models/operation_history.dart';
+import '../../services/product_cache.dart';
 import '../../theme/app_design.dart';
 
 /// operation_type に応じて履歴行の表示を切り替える。
@@ -76,7 +77,7 @@ class HistoryListTile extends StatelessWidget {
           ...history.items.map((item) => Padding(
                 padding: const EdgeInsets.only(top: 2),
                 child: Text(
-                  '${item.productCode ?? '--'}　'
+                  '${_productCodeLabel(item.productCode)}　'
                   '${item.number ?? '--'}　'
                   '${item.statusAfter ?? '--'}',
                   style: const TextStyle(fontSize: 13, color: Colors.black87),
@@ -88,7 +89,7 @@ class HistoryListTile extends StatelessWidget {
           return Padding(
             padding: const EdgeInsets.only(top: 2),
             child: Text(
-              '商品 ${item.productCode ?? '--'}　'
+              '商品 ${_productCodeLabel(item.productCode)}　'
               '番号 ${item.number ?? '--'}\n'
               'EPC ${item.epc ?? '--'}\n'
               'ステータス ${item.statusAfter ?? '登録'}',
@@ -117,7 +118,7 @@ class HistoryListTile extends StatelessWidget {
           ...history.items.map((item) => Padding(
                 padding: const EdgeInsets.only(top: 2),
                 child: Text(
-                  '${item.epc ?? item.productCode ?? '--'}　${item.resultStatus.displayLabel}',
+                  '${item.epc != null && item.epc!.trim().isNotEmpty ? item.epc! : _productCodeLabel(item.productCode)}　${item.resultStatus.displayLabel}',
                   style: const TextStyle(fontSize: 13, color: Colors.black87),
                 ),
               )),
@@ -188,7 +189,7 @@ class _StatusUpdateItemRow extends StatelessWidget {
         children: [
           Expanded(
             child: Text(
-              '${item.productCode ?? '--'}　'
+              '${_productCodeLabel(item.productCode)}　'
               '${item.statusBefore ?? '--'} → ${item.statusAfter ?? '--'}',
               style: const TextStyle(fontSize: 13, color: Colors.black87),
             ),
@@ -289,14 +290,36 @@ String _detailItemText(OperationType type, OperationHistoryItem item) {
           '$resultLine';
     case OperationType.tagRegistration:
       return 'EPC: ${item.epc ?? '--'}\n'
-          '商品名: ${item.productName ?? '--'}\n'
+          '商品名: ${_displayProductName(item)}\n'
           '商品: ${item.productCode ?? '--'} / ${item.number ?? '--'}\n'
           '$resultLine';
     case OperationType.statusUpdate:
     case OperationType.slipLink:
     case OperationType.productCodeUpdate:
-      return '商品名: ${item.productName ?? '--'}\n'
+      return '商品名: ${_displayProductName(item)}\n'
           '商品: ${item.productCode ?? '--'} / ${item.number ?? '--'}\n'
           '$resultLine';
   }
+}
+
+/// 商品コード。キャッシュに商品名があればコードのあとに付ける。
+String _productCodeLabel(String? code) {
+  final c = (code == null || code.trim().isEmpty) ? '--' : code.trim();
+  final name = _cachedProductName(c == '--' ? null : c);
+  if (name == null) return c;
+  return '$c　$name';
+}
+
+String _displayProductName(OperationHistoryItem item) {
+  final stored = item.productName?.trim();
+  if (stored != null && stored.isNotEmpty) return stored;
+  return _cachedProductName(item.productCode) ?? '--';
+}
+
+String? _cachedProductName(String? code) {
+  final c = code?.trim() ?? '';
+  if (c.isEmpty) return null;
+  final name = ProductCache.instance.getNameFromMemory(c)?.trim();
+  if (name == null || name.isEmpty) return null;
+  return name;
 }

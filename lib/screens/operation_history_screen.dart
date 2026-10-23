@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/operation_history.dart';
 import '../services/operation_history_service.dart';
+import '../services/product_cache.dart';
 import '../theme/app_design.dart';
 import '../widgets/history/history_list_tile.dart';
 import '../widgets/main_flow_nav_bar.dart';
@@ -28,6 +29,7 @@ class _OperationHistoryScreenState extends State<OperationHistoryScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
+    await ProductCache.instance.init();
     final list = await OperationHistoryService.instance.listRecent(
       purgeFirst: true,
     );

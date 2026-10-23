@@ -111,6 +111,9 @@ class _TagListScreenState extends State<TagListScreen> {
   int _sendCompleted = 0;
   int _sendTotal = 0;
 
+  /// クリア後に、進行中の照会結果が一覧へ戻らないようにする。
+  int _listEpoch = 0;
+
   final _reader = TagReaderService.instance;
   StreamSubscription<InventoryEpc>? _invSub;
   HardwareTriggerHandler? _hwTriggerHandler;
@@ -137,12 +140,13 @@ class _TagListScreenState extends State<TagListScreen> {
     if (index < 0 || index >= _reads.length) return;
     if (_dbQuerying.contains(index)) return;
 
+    final epoch = _listEpoch;
+    final epc = _reads[index].epc;
     setState(() => _dbQuerying.add(index));
     try {
-      final epc = _reads[index].epc;
       final api = ApiClient(baseUrl: kApiBaseUrl);
       final p = await api.fetchProduct(epc);
-      if (!mounted) return;
+      if (!_listStillCurrent(epoch, index, epc)) return;
       if (p == null) {
         setState(() {
           _statusOverrides.remove(index);
@@ -170,7 +174,7 @@ class _TagListScreenState extends State<TagListScreen> {
       await StorageLocationStorage.rememberDbStorageLocationCode(
         p.storageLocationCode,
       );
-      if (!mounted) return;
+      if (!_listStillCurrent(epoch, index, epc)) return;
       setState(() {
         _statusOverrides.remove(index);
         final cur = _reads[index];
@@ -196,10 +200,18 @@ class _TagListScreenState extends State<TagListScreen> {
         ).showSnackBar(SnackBar(content: Text(userError.displayText)));
       }
     } finally {
-      if (mounted) {
+      if (mounted && epoch == _listEpoch) {
         setState(() => _dbQuerying.remove(index));
       }
     }
+  }
+
+  bool _listStillCurrent(int epoch, int index, String epc) {
+    return mounted &&
+        epoch == _listEpoch &&
+        index >= 0 &&
+        index < _reads.length &&
+        _reads[index].epc == epc;
   }
 
   /// テスト用: API からランダムに1件取得し、読み取りとして追加（WindowsなどAPI接続時のみ）
@@ -211,11 +223,12 @@ class _TagListScreenState extends State<TagListScreen> {
       );
       return;
     }
+    final epoch = _listEpoch;
     setState(() => _randomLoading = true);
     try {
       final api = ApiClient(baseUrl: kApiBaseUrl);
       final list = await api.fetchRandomProducts(count: 1);
-      if (!mounted) return;
+      if (!mounted || epoch != _listEpoch) return;
       final now = DateTime.now();
       final readAt =
           '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} '
@@ -224,7 +237,7 @@ class _TagListScreenState extends State<TagListScreen> {
         await StorageLocationStorage.rememberDbStorageLocationCode(
           p.storageLocationCode,
         );
-        if (!mounted) return;
+        if (!mounted || epoch != _listEpoch) return;
         setState(() {
           _reads.add(
             _TagReadItem(
@@ -291,8 +304,9 @@ class _TagListScreenState extends State<TagListScreen> {
     }
 
     await _invSub?.cancel();
+    final epoch = _listEpoch;
     _invSub = _reader.inventoryEpcStream.listen((inv) async {
-      if (!mounted || !_isReading) return;
+      if (!mounted || !_isReading || epoch != _listEpoch) return;
       final epc = inv.epcForLookup;
       // 重複排除: 既に同じ EPC が一覧にあれば追加しない
       if (_reads.any((r) => r.epc == epc)) return;
@@ -300,7 +314,7 @@ class _TagListScreenState extends State<TagListScreen> {
       // まずローカル台帳＋商品台帳で照合（自動 API はしない）
       await TagLedgerCache.instance.init();
       await ProductCache.instance.init();
-      if (!mounted || !_isReading) return;
+      if (!mounted || !_isReading || epoch != _listEpoch) return;
       if (_reads.any((r) => r.epc == epc)) return;
 
       final readAt = _formatNow();
@@ -349,7 +363,12 @@ class _TagListScreenState extends State<TagListScreen> {
       phase: false,
       noRepeat: true,
     );
-    if (!mounted) return;
+    if (!mounted || epoch != _listEpoch) {
+      await _invSub?.cancel();
+      _invSub = null;
+      await _reader.stopInventory();
+      return;
+    }
     if (!ok) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('読取開始に失敗しました（接続状態を確認してください）。')),
@@ -358,6 +377,49 @@ class _TagListScreenState extends State<TagListScreen> {
       _invSub = null;
       setState(() => _isReading = false);
     }
+  }
+
+  Future<void> _confirmClearReads() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('読取データをクリアしますか？'),
+        content: const Text(
+          'この画面の読取一覧を消去します。まだ送信していない内容も消えます。読取中のときは停止します。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('キャンセル'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('クリア'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await _clearReads();
+  }
+
+  Future<void> _clearReads() async {
+    _listEpoch++;
+    if (_isReading) {
+      await _stopInventoryAndState();
+    }
+    if (!mounted) return;
+    setState(() {
+      _reads.clear();
+      _selectedForStatus.clear();
+      _selectedForSend.clear();
+      _sentIndices.clear();
+      _statusOverrides.clear();
+      _dbQuerying.clear();
+      _sendCompleted = 0;
+      _sendTotal = 0;
+    });
   }
 
   Future<void> _toggleRead() async {
@@ -881,6 +943,20 @@ class _TagListScreenState extends State<TagListScreen> {
                   showBackButton: widget.showBackButton,
                   title: 'ICタグ読取・更新',
                   onBack: () => Navigator.of(context).pop(),
+                  trailing: TextButton(
+                    onPressed: _isSending ? null : _confirmClearReads,
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppDesign.primaryLink,
+                      disabledForegroundColor: const Color(0xFFB0B0B0),
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text(
+                      'クリア',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                    ),
+                  ),
                 ),
                 // 読取コントロール
                 Container(
