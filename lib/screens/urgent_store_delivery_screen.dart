@@ -27,10 +27,7 @@ import 'urgent_store_delivery_slip_select_screen.dart';
 /// 急ぎ来店納品の統合画面（タグ読取 + 当日未処理一覧 + 商品選択）
 /// 伝票選択・送信はモック。永続保存・送信 API は未接続。
 class UrgentStoreDeliveryScreen extends StatefulWidget {
-  const UrgentStoreDeliveryScreen({
-    super.key,
-    this.showBackButton = true,
-  });
+  const UrgentStoreDeliveryScreen({super.key, this.showBackButton = true});
 
   final bool showBackButton;
 
@@ -142,15 +139,31 @@ class _UrgentStoreDeliveryScreenState extends State<UrgentStoreDeliveryScreen> {
     setState(() => _selectedIds.clear());
   }
 
-  void _openSlipSelect() {
+  Future<void> _openSlipSelect() async {
     if (_selectedCount == 0) return;
     final selected = _items.where((e) => _selectedIds.contains(e.id)).toList();
-    Navigator.of(context).push(
+    await _pauseHardwareTrigger();
+    if (!mounted) return;
+    await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) =>
             UrgentStoreDeliverySlipSelectScreen(selectedItems: selected),
       ),
     );
+    if (!mounted) return;
+    await _resumeHardwareTrigger();
+  }
+
+  /// 伝票選択など、この読取画面が見えていない間は本体ボタンを止める。
+  Future<void> _pauseHardwareTrigger() async {
+    await _hwTriggerHandler?.cancelSubscriptionOnly();
+    if (_isReading) await _stopReading();
+  }
+
+  Future<void> _resumeHardwareTrigger() async {
+    final handler = _hwTriggerHandler;
+    if (handler == null || !mounted) return;
+    await handler.attach(_reader);
   }
 
   /// 追加に成功したら選択にも入れる
@@ -220,8 +233,10 @@ class _UrgentStoreDeliveryScreenState extends State<UrgentStoreDeliveryScreen> {
       await ProductCache.instance.init();
       final entry = TagLedgerCache.instance.lookup(epc);
       if (entry != null) {
-        final name = ProductCache.instance
-                .getNameFromMemory(entry.productCode?.toString() ?? '') ??
+        final name =
+            ProductCache.instance.getNameFromMemory(
+              entry.productCode?.toString() ?? '',
+            ) ??
             '商品不明';
         if (!mounted) return;
         _tryAddAndSelect(
@@ -266,8 +281,9 @@ class _UrgentStoreDeliveryScreenState extends State<UrgentStoreDeliveryScreen> {
         );
       }
       if (!mounted) return;
-      final name =
-          (p == null || p.productName.isEmpty) ? '商品不明' : p.productName;
+      final name = (p == null || p.productName.isEmpty)
+          ? '商品不明'
+          : p.productName;
       final code = p?.productCode?.toString() ?? '--';
       _tryAddAndSelect(
         UrgentReadItem(
@@ -333,8 +349,10 @@ class _UrgentStoreDeliveryScreenState extends State<UrgentStoreDeliveryScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: bg,
                 foregroundColor: Colors.white,
-                padding:
-                    const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
+                padding: const EdgeInsets.symmetric(
+                  vertical: 14,
+                  horizontal: 20,
+                ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10),
                 ),
@@ -417,8 +435,9 @@ class _UrgentStoreDeliveryScreenState extends State<UrgentStoreDeliveryScreen> {
                             ),
                             if (hasItems)
                               TextButton(
-                                onPressed:
-                                    allSelected ? _clearSelection : _selectAll,
+                                onPressed: allSelected
+                                    ? _clearSelection
+                                    : _selectAll,
                                 style: TextButton.styleFrom(
                                   foregroundColor: AppDesign.primaryLink,
                                   padding: const EdgeInsets.symmetric(
@@ -470,9 +489,7 @@ class _UrgentStoreDeliveryScreenState extends State<UrgentStoreDeliveryScreen> {
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                   decoration: const BoxDecoration(
                     color: Color(0xFFF8F8F8),
-                    border: Border(
-                      top: BorderSide(color: Color(0xFFEEEEEE)),
-                    ),
+                    border: Border(top: BorderSide(color: Color(0xFFEEEEEE))),
                   ),
                   child: SafeArea(
                     top: false,
@@ -480,9 +497,7 @@ class _UrgentStoreDeliveryScreenState extends State<UrgentStoreDeliveryScreen> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         Text(
-                          canSelectSlip
-                              ? '$selectedCount点選択中'
-                              : '商品を選択してください',
+                          canSelectSlip ? '$selectedCount点選択中' : '商品を選択してください',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 14,
@@ -502,11 +517,9 @@ class _UrgentStoreDeliveryScreenState extends State<UrgentStoreDeliveryScreen> {
                                   ? AppDesign.primaryButton
                                   : AppDesign.disabledButton,
                               foregroundColor: Colors.white,
-                              disabledBackgroundColor:
-                                  AppDesign.disabledButton,
+                              disabledBackgroundColor: AppDesign.disabledButton,
                               disabledForegroundColor: Colors.white70,
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 14),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(10),
                               ),

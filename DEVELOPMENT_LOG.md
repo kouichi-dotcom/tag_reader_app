@@ -6,6 +6,32 @@ Cursorで実施した開発内容を記録する。
 
 ## 作業記録
 
+### 2026-10-23 — ホームと下部タブを main へ反映（STEP 11-A）
+
+- **目的**: Windows で行った UI 変更を、iOS の staging / prod 分離と `0.9.0+1` を維持したまま GitHub の `main` へ反映する
+- **UI**: 下部5タブ（ホーム / ICタグ更新 / 伝票 / 在庫 / 履歴）。ホームは Bluetooth 接続状況と設定メニュー。急ぎ来店納品は有効な環境だけ伝票タブに表示。EPC読取テストの画面と入口は削除
+- **本体ボタン**: ICタグ更新タブが見えている間、伝票のタグ紐付け画面、急ぎ来店納品の読取画面だけ受け付ける。タブを離れると購読を外し、読取中なら止める
+- **維持**: Bundle ID、Team ID `3MMGLB2435`、Scheme、FLAVOR、APP_ENV、バージョン `0.9.0+1`、API、DB。prod の急ぎ来店納品は非表示のまま
+- **変更ファイル**: `home_screen.dart`、`slip_load_screen.dart`、`tag_list_screen.dart`、`settings_screen.dart`、`hardware_trigger_settings_screen.dart`、`urgent_store_delivery_screen.dart`、`zaicon_main_shell.dart`、`epc_test_screen.dart`（削除）、`test/home_navigation_test.dart`、`test/urgent_store_delivery_visibility_test.dart`、`CURRENT_TASK.md`、`DEVELOPMENT_LOG.md`
+- **対象外**: `pubspec.lock`。Windows SDK による characters / matcher / material_color_utilities / test_api の差分だけなので未コミット
+- **検証**: `flutter pub get` 成功。`flutter test` は 45 件成功。`flutter analyze` は既存の info 10 件と warning 2 件のみで、今回の新規指摘は無い。`git diff --check` に空白エラーは無い
+- **次回**: Mac で Build Number を `2` にして TestFlight Build 2 を作る。このコミットではバージョンを変えない。既存の Build 1 は維持する
+
+### 2026-10-22 — ホームと下部固定タブ
+
+- **目的**: 主要画面をホーム / ICタグ更新 / 伝票 / 在庫 / 履歴の5タブにし、ホームは接続状況と設定メニューにする
+- **タブ**: `NavigationBar` と `IndexedStack`。未表示タブは作らず、一度開いた画面は破棄しない。詳細画面は従来の push で開き、戻るとタブに戻る
+- **ホーム**: Bluetooth接続状況（接続済み / 未接続、リーダー名、ファームウェアが取れたときだけ FW）。タップで既存の接続画面。設定は出力、担当者、保管場所、読み取りボタン動作、タグ設定の順
+- **表示名**: 「読み取りボタン動作設定」は画面タイトルとメニュー名のみ。保存キーと設定値は未変更
+- **維持**: 読取・書込、接続・切断の内部処理、API、接続先、バージョン `0.9.0+1`
+- **急ぎ来店納品**: ホームからは外し、有効な環境だけ伝票タブに表示する。判定フラグは未変更
+- **EPC読取テスト**: 画面と設定メニューの入口を削除。他機能の読取処理は残している
+- **本体ボタン**: ICタグ更新タブが見えていない間は購読を外し、読取中なら止める。伝票のタグ紐付け画面は、その画面を開いている間だけ受け付ける。急ぎ来店納品は読取画面を離れて伝票選択に進む間は止める
+- **バッテリー**: アプリに残量を取る既存処理がないため表示しない
+- **在庫**: タブの起点にはホームへ戻るボタンを出さない。商品一覧からカテゴリー一覧へ戻る動きは維持
+- **検証**: `flutter analyze` は既存の info 10件と warning 2件のみで、今回の新規指摘は無い。`flutter test` は 45件成功
+- **未実施**: 実機の見た目確認、コミット / Push。`pubspec.lock` の SDK 差分は未コミットのまま
+
 ### 2026-10-22 — 在庫確認の戻る操作をカテゴリー一覧へ
 
 - **目的**: カテゴリーを開いたあと、画面端スワイプや戻るでホームまで戻ってしまうのをやめ、カテゴリー一覧へ戻す

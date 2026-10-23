@@ -26,23 +26,46 @@ void main() {
     debugUrgentStoreDeliveryOverride = false;
     await pumpHome(tester);
     expect(find.text('急ぎ来店納品'), findsNothing);
-    expect(find.text('ICタグを読み取る・更新する'), findsOneWidget);
-    expect(find.text('伝票を読み込む'), findsOneWidget);
-    expect(find.text('在庫を見る'), findsOneWidget);
-    expect(find.text('更新履歴'), findsOneWidget);
+    expect(find.text('リーダーの出力設定'), findsOneWidget);
+    expect(find.text('担当者設定'), findsOneWidget);
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('伝票'),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('急ぎ来店納品'), findsNothing);
+    expect(find.text('担当伝票のみ表示'), findsOneWidget);
   });
 
   testWidgets('iOS staging では急ぎ来店納品を出す', (tester) async {
     debugUrgentStoreDeliveryOverride = true;
     await pumpHome(tester);
+    expect(find.text('急ぎ来店納品'), findsNothing);
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('伝票'),
+      ),
+    );
+    await tester.pump();
     expect(find.text('急ぎ来店納品'), findsOneWidget);
     expect(find.text('伝票を選ばず先にタグを読み取る'), findsOneWidget);
-    expect(find.text('伝票を読み込む'), findsOneWidget);
+    expect(find.text('担当伝票のみ表示'), findsOneWidget);
   });
 
   testWidgets('Android では急ぎ来店納品を出す', (tester) async {
     debugUrgentStoreDeliveryOverride = true;
     await pumpHome(tester);
+    expect(find.text('急ぎ来店納品'), findsNothing);
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('伝票'),
+      ),
+    );
+    await tester.pump();
     expect(find.text('急ぎ来店納品'), findsOneWidget);
   });
 

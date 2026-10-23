@@ -4,7 +4,7 @@ import '../theme/app_design.dart';
 import '../widgets/main_flow_nav_bar.dart';
 import '../widgets/zaicon_inventory_body.dart';
 
-/// 在庫確認（メインから遷移。フッタータブなし）
+/// 在庫確認。タブのルートでは戻るを出さず、商品一覧は従来どおりこの画面へ戻る。
 class ZaiconMainShell extends StatelessWidget {
   const ZaiconMainShell({super.key, this.showBackButton = true});
 

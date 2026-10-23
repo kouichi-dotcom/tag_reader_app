@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../theme/app_design.dart';
 import '../widgets/main_flow_nav_bar.dart';
 import 'employee_code_screen.dart';
-import 'epc_test_screen.dart';
 import 'hardware_trigger_settings_screen.dart';
 import 'radio_power_screen.dart';
 import 'storage_location_screen.dart';
@@ -37,61 +36,82 @@ class SettingsScreen extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     children: [
                       ListTile(
-                        leading: const Icon(Icons.badge, color: Color(0xFF26A69A)),
+                        leading: const Icon(
+                          Icons.badge,
+                          color: Color(0xFF26A69A),
+                        ),
                         title: const Text('担当者コード入力'),
                         subtitle: const Text('担当者の設定'),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () async {
                           await Navigator.of(context).push<bool>(
                             MaterialPageRoute(
-                              builder: (context) => const EmployeeCodeScreen(showBackButton: true),
+                              builder: (context) => const EmployeeCodeScreen(
+                                showBackButton: true,
+                              ),
                             ),
                           );
                         },
                       ),
                       ListTile(
-                        leading: const Icon(Icons.warehouse, color: Color(0xFFFF9800)),
+                        leading: const Icon(
+                          Icons.warehouse,
+                          color: Color(0xFFFF9800),
+                        ),
                         title: const Text('保管場所選択'),
                         subtitle: const Text('手動 / GPS自動判定の設定'),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () {
                           Navigator.of(context).push(
                             MaterialPageRoute<void>(
-                              builder: (context) =>
-                                  const StorageLocationScreen(showBackButton: true),
+                              builder: (context) => const StorageLocationScreen(
+                                showBackButton: true,
+                              ),
                             ),
                           );
                         },
                       ),
                       ListTile(
-                        leading: const Icon(Icons.hardware, color: Color(0xFF5C6BC0)),
-                        title: const Text('タグリーダー本体の読み取りボタン設定'),
+                        leading: const Icon(
+                          Icons.hardware,
+                          color: Color(0xFF5C6BC0),
+                        ),
+                        title: const Text('読み取りボタン動作設定'),
                         subtitle: const Text('切替式・時間式・長押し式'),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () {
                           Navigator.of(context).push(
                             MaterialPageRoute<void>(
                               builder: (context) =>
-                                  const HardwareTriggerSettingsScreen(showBackButton: true),
+                                  const HardwareTriggerSettingsScreen(
+                                    showBackButton: true,
+                                  ),
                             ),
                           );
                         },
                       ),
                       ListTile(
-                        leading: const Icon(Icons.tune, color: Color(0xFF8BC34A)),
+                        leading: const Icon(
+                          Icons.tune,
+                          color: Color(0xFF8BC34A),
+                        ),
                         title: const Text('出力設定'),
                         subtitle: const Text('出力モード・電波強度の調整'),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () {
                           Navigator.of(context).push(
                             MaterialPageRoute<void>(
-                              builder: (context) => const RadioPowerScreen(showBackButton: true),
+                              builder: (context) =>
+                                  const RadioPowerScreen(showBackButton: true),
                             ),
                           );
                         },
                       ),
                       ListTile(
-                        leading: const Icon(Icons.sell, color: Color(0xFFE65100)),
+                        leading: const Icon(
+                          Icons.sell,
+                          color: Color(0xFFE65100),
+                        ),
                         title: const Text('タグ設定'),
                         subtitle: const Text('タグID再設定など'),
                         trailing: const Icon(Icons.chevron_right),
@@ -100,32 +120,6 @@ class SettingsScreen extends StatelessWidget {
                             MaterialPageRoute<void>(
                               builder: (context) =>
                                   const TagSettingsScreen(showBackButton: true),
-                            ),
-                          );
-                        },
-                      ),
-                      const Divider(height: 24),
-                      const Padding(
-                        padding: EdgeInsets.fromLTRB(16, 4, 16, 4),
-                        child: Text(
-                          '開発者向け',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF888888),
-                          ),
-                        ),
-                      ),
-                      ListTile(
-                        leading: const Icon(Icons.bug_report_outlined, color: Color(0xFF7B1FA2)),
-                        title: const Text('EPC読取テスト'),
-                        subtitle: const Text('タグEPCの読取・表示（テスト）'),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute<void>(
-                              builder: (context) =>
-                                  const EpcTestScreen(showBackButton: true),
                             ),
                           );
                         },

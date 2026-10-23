@@ -17,7 +17,8 @@ class HardwareTriggerSettingsScreen extends StatefulWidget {
       _HardwareTriggerSettingsScreenState();
 }
 
-class _HardwareTriggerSettingsScreenState extends State<HardwareTriggerSettingsScreen> {
+class _HardwareTriggerSettingsScreenState
+    extends State<HardwareTriggerSettingsScreen> {
   HardwareTriggerMode _mode = HardwareTriggerMode.toggle;
   double _timedSeconds = HardwareTriggerModeStorage.timedSecondsDefault;
   ReaderFamily _readerFamily = ReaderFamily.unknown;
@@ -34,7 +35,9 @@ class _HardwareTriggerSettingsScreenState extends State<HardwareTriggerSettingsS
       final connectedName = await ConnectedDeviceStorage.getName();
       final family = detectReaderFamilyFromName(connectedName);
       final forced = await HardwareTriggerModeStorage.forceToggleIfSr7AndHold();
-      final m = forced ? HardwareTriggerMode.toggle : await HardwareTriggerModeStorage.getMode();
+      final m = forced
+          ? HardwareTriggerMode.toggle
+          : await HardwareTriggerModeStorage.getMode();
       final s = await HardwareTriggerModeStorage.getTimedSeconds();
       if (!mounted) return;
       setState(() {
@@ -101,15 +104,8 @@ class _HardwareTriggerSettingsScreenState extends State<HardwareTriggerSettingsS
               children: [
                 MainFlowNavBar(
                   showBackButton: widget.showBackButton,
-                  title: 'タグリーダー本体の読み取りボタン設定',
+                  title: '読み取りボタン動作設定',
                   onBack: () => Navigator.of(context).pop(),
-                  titleMaxLines: 2,
-                  titleStyle: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black,
-                    height: 1.2,
-                  ),
                 ),
                 Expanded(
                   child: _loading
@@ -118,7 +114,7 @@ class _HardwareTriggerSettingsScreenState extends State<HardwareTriggerSettingsS
                           padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                           children: [
                             const Text(
-                              'タグリーダー本体の読み取りボタン',
+                              '読み取りボタン動作設定',
                               style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.w600,
@@ -128,7 +124,11 @@ class _HardwareTriggerSettingsScreenState extends State<HardwareTriggerSettingsS
                             const SizedBox(height: 8),
                             Text(
                               '画面内の「読取開始／読取停止」ボタンは常に切替式（トグル）です。',
-                              style: TextStyle(fontSize: 13, color: Colors.grey.shade700, height: 1.4),
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey.shade700,
+                                height: 1.4,
+                              ),
                             ),
                             const SizedBox(height: 20),
                             SegmentedButton<HardwareTriggerMode>(
@@ -149,7 +149,9 @@ class _HardwareTriggerSettingsScreenState extends State<HardwareTriggerSettingsS
                               ],
                               selected: <HardwareTriggerMode>{_mode},
                               onSelectionChanged: (values) {
-                                final selected = values.isNotEmpty ? values.first : null;
+                                final selected = values.isNotEmpty
+                                    ? values.first
+                                    : null;
                                 if (selected != null) {
                                   _setMode(selected);
                                 }
@@ -159,7 +161,11 @@ class _HardwareTriggerSettingsScreenState extends State<HardwareTriggerSettingsS
                             if (_readerFamily == ReaderFamily.sr7) ...[
                               Text(
                                 'SR-7 接続中は「長押し式」は利用できません（切替式/時間式のみ）。',
-                                style: TextStyle(fontSize: 13, color: Colors.orange.shade800, height: 1.4),
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.orange.shade800,
+                                  height: 1.4,
+                                ),
                               ),
                               const SizedBox(height: 10),
                             ],
@@ -167,9 +173,13 @@ class _HardwareTriggerSettingsScreenState extends State<HardwareTriggerSettingsS
                               _mode == HardwareTriggerMode.toggle
                                   ? '1回押すと読取ON、もう1回でOFF'
                                   : _mode == HardwareTriggerMode.hold
-                                      ? '押している間だけ読取'
-                                      : '押下で読取開始し、一定時間後に自動停止（再押下で時間延長）',
-                              style: TextStyle(fontSize: 13, color: Colors.grey.shade700, height: 1.4),
+                                  ? '押している間だけ読取'
+                                  : '押下で読取開始し、一定時間後に自動停止（再押下で時間延長）',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey.shade700,
+                                height: 1.4,
+                              ),
                             ),
                             if (_mode == HardwareTriggerMode.timed) ...[
                               const SizedBox(height: 16),
@@ -187,32 +197,42 @@ class _HardwareTriggerSettingsScreenState extends State<HardwareTriggerSettingsS
                                   ),
                                   _timedSecondsStepperButton(
                                     label: '∧',
-                                    onPressed: _timedSeconds >=
-                                            HardwareTriggerModeStorage.timedSecondsMax
+                                    onPressed:
+                                        _timedSeconds >=
+                                            HardwareTriggerModeStorage
+                                                .timedSecondsMax
                                         ? null
                                         : () => _adjustTimedSeconds(
-                                              HardwareTriggerModeStorage.timedSecondsStep,
-                                            ),
+                                            HardwareTriggerModeStorage
+                                                .timedSecondsStep,
+                                          ),
                                   ),
                                   const SizedBox(width: 4),
                                   _timedSecondsStepperButton(
                                     label: '∨',
-                                    onPressed: _timedSeconds <=
-                                            HardwareTriggerModeStorage.timedSecondsMin
+                                    onPressed:
+                                        _timedSeconds <=
+                                            HardwareTriggerModeStorage
+                                                .timedSecondsMin
                                         ? null
                                         : () => _adjustTimedSeconds(
-                                              -HardwareTriggerModeStorage.timedSecondsStep,
-                                            ),
+                                            -HardwareTriggerModeStorage
+                                                .timedSecondsStep,
+                                          ),
                                   ),
                                 ],
                               ),
                               Slider(
                                 min: HardwareTriggerModeStorage.timedSecondsMin,
                                 max: HardwareTriggerModeStorage.timedSecondsMax,
-                                divisions: ((HardwareTriggerModeStorage.timedSecondsMax -
-                                            HardwareTriggerModeStorage.timedSecondsMin) /
-                                        HardwareTriggerModeStorage.timedSecondsStep)
-                                    .round(),
+                                divisions:
+                                    ((HardwareTriggerModeStorage
+                                                    .timedSecondsMax -
+                                                HardwareTriggerModeStorage
+                                                    .timedSecondsMin) /
+                                            HardwareTriggerModeStorage
+                                                .timedSecondsStep)
+                                        .round(),
                                 value: _timedSeconds.clamp(
                                   HardwareTriggerModeStorage.timedSecondsMin,
                                   HardwareTriggerModeStorage.timedSecondsMax,
