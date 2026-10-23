@@ -6,6 +6,15 @@ Cursorで実施した開発内容を記録する。
 
 ## 作業記録
 
+### 2026-10-23 — TestFlight外部テスト審査申請
+
+- **目的**: Tag Reader App の TestFlight 外部テスト審査申請を記録する。アプリ本体と設定は変更していない
+- **アプリ**: 名称は Tag Reader App。リリース名称は v0.9.0 Beta。Version `0.9.0`、Build Number `2`。Bundle ID は `jp.co.ohmiyakouki.tagreader`。Git Commit は `1eedd466198f016c7fc38e6176dc913488f158aa`。接続先は prod（本番API・本番DB）
+- **内部テスト**: TestFlight への Build 2 アップロードは完了。内部テストグループは「開発担当者テスト」。iPhone への TestFlight インストールと更新は成功し、新しい5タブUIなどの基本動作確認は完了。USB 接続は不要。本番DBへの更新操作は未検証
+- **外部テスト審査**: 申請日は 2026年10月23日。外部テストグループは「社員向けBetaテスト」。申請対象は v0.9.0 Build 2。TestFlight テスト情報、審査用の説明、連絡先情報は登録済み。招待方式は個別メールアドレス。公開招待URLは使用しない。外部テスターは 0 人。審査ステータスは審査待ち
+- **今後**: Apple の Beta App Review 結果を確認する。承認後に社員を個別メールで招待し、社員によるテストを実施する。不具合は次回 Build へ反映する。初回正式リリース v1.0.0 に向けた準備を進める
+- **既知の課題**: iOS Deployment Target は 13.0 で、2027年4月以降の要件変更への対応が必要。RFIDリーダー本体ボタンなどの実機検証は継続。本番DBへの更新機能は社員配布前に運用上の注意が必要。staging 環境の送信制限問題は今回の対象外
+
 ### 2026-10-23 — v0.9.0 TestFlight Build 2 の準備（STEP 11-B）
 
 - **目的**: Windows の最新コミットを Mac へ反映し、社員向け TestFlight の `v0.9.0` Build `2` を準備する
